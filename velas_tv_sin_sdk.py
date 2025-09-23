@@ -1,121 +1,171 @@
-# -*- coding: utf-8 -*-
-import argparse
-import sys
-from typing import List, Any
-
-import requests
+# velas_tv_sin_sdk.py
+# ---------------------------------------------------------
+# Velas Binance (USDⓈ-M)
+# - Solo precios y velas (sin indicadores ni alertas)
+# - Usa tu zona horaria local (UTC-3, Buenos Aires)
+# ---------------------------------------------------------
+import os, time
+import numpy as np
 import pandas as pd
 import mplfinance as mpf
-import pytz  # para manejar zona horaria local
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+from dotenv import load_dotenv
+from binance.um_futures import UMFutures
 
-SUPPORTED: List[str] = [
-    "1s", "1m", "3m", "5m", "15m", "30m",
-    "1h", "2h", "4h", "6h", "8h", "12h",
-    "1d", "3d", "1w", "1M"
-]
+# ================== Config ==================
+load_dotenv()
 
-def fetch(mode: str, symbol: str, interval: str, limit: int, price_type: str, testnet: bool) -> Any:
-    if interval not in SUPPORTED:
-        raise ValueError(f"Intervalo no soportado: {interval}")
-    symbol = symbol.upper()
+SYMBOL_DISPLAY = os.getenv("SYMBOL", "ETHUSDT.P")
+API_SYMBOL     = SYMBOL_DISPLAY.replace(".P", "")
+INTERVAL       = os.getenv("INTERVAL", "30m")
+LIMITE         = int(os.getenv("LIMITE", "1500"))
+BASE_URL       = os.getenv("BASE_URL", "https://fapi.binance.com")  # mainnet
+PRICE_SOURCE   = os.getenv("PRICE_SOURCE", "LAST").upper()          # LAST | MARK | INDEX
 
-    if mode == "spot":
-        base = "https://testnet.binance.vision" if testnet else "https://api.binance.com"
-        url = f"{base}/api/v3/klines"
-    else:
-        base = "https://testnet.binancefuture.com" if testnet else "https://fapi.binance.com"
-        if price_type == "mark":
-            url = f"{base}/fapi/v1/markPriceKlines"
-        elif price_type == "index":
-            url = f"{base}/fapi/v1/indexPriceKlines"
-        else:  # last
-            url = f"{base}/fapi/v1/klines"
+RUN_LOOP       = os.getenv("RUN_LOOP", "true").lower() in ("1","true","yes","y","on")
+REFRESH_JITTER = int(os.getenv("REFRESH_JITTER_SEC", "2"))
 
-    r = requests.get(url, params={"symbol": symbol, "interval": interval, "limit": limit}, timeout=20)
-    r.raise_for_status()
-    data = r.json()
+DESPIKE_WITH_MARK = os.getenv("DESPIKE_WITH_MARK", "true").lower() in ("1","true","yes","y","on")
+BAND_PCT          = float(os.getenv("BAND_PCT", "1.0"))
 
-    if isinstance(data, dict) and "code" in data:
-        raise RuntimeError(f"Binance error {data.get('code')}: {data.get('msg')} ({url})")
+# ================== Zona horaria local ==================
+LOCAL_TZ = ZoneInfo("America/Argentina/Buenos_Aires")
 
-    if not isinstance(data, list) or len(data) == 0:
-        raise RuntimeError("La respuesta no contiene velas (lista vacía).")
+# ================== Cliente ==================
+client = UMFutures(base_url=BASE_URL)
 
-    return data
+# ================== Utilidades ==================
+def _interval_to_timedelta(interval: str) -> timedelta:
+    s = interval.strip().lower()
+    if s.endswith("m"): return timedelta(minutes=int(s[:-1]))
+    if s.endswith("h"): return timedelta(hours=int(s[:-1]))
+    if s.endswith("d"): return timedelta(days=int(s[:-1]))
+    raise ValueError(f"Intervalo no soportado: {interval}")
 
-def to_df(kl):
-    cols = [
-        "open_time", "open", "high", "low", "close", "volume",
-        "close_time", "qav", "trades", "taker_base", "taker_quote", "ignore"
-    ]
-    df = pd.DataFrame(kl, columns=cols)
+def _next_close_after(ts: datetime, interval: str) -> datetime:
+    dt = _interval_to_timedelta(interval)
+    epoch = datetime(1970,1,1, tzinfo=LOCAL_TZ)
+    secs  = int((ts - epoch).total_seconds())
+    step  = int(dt.total_seconds())
+    next_sec = ((secs // step) + 1) * step
+    return epoch + timedelta(seconds=next_sec)
 
-    df["open_time"]  = pd.to_datetime(df["open_time"],  unit="ms", errors="coerce", utc=True)
-    df["close_time"] = pd.to_datetime(df["close_time"], unit="ms", errors="coerce", utc=True)
-    df = df.dropna(subset=["open_time"])
+def _klines_to_df(raw):
+    rows = []
+    for k in raw:
+        rows.append({
+            "Datetime": datetime.fromtimestamp(k[0]/1000.0, LOCAL_TZ),
+            "Open":  float(k[1]),
+            "High":  float(k[2]),
+            "Low":   float(k[3]),
+            "Close": float(k[4]),
+            "Volume": float(k[5]) if len(k) > 5 else 0.0,
+        })
+    df = pd.DataFrame(rows)
+    return df.set_index("Datetime") if not df.empty else df
 
-    # aplicar zona horaria local (Corrientes: America/Argentina/Buenos_Aires)
-    local_tz = "America/Argentina/Buenos_Aires"
-    df["open_time"]  = df["open_time"].dt.tz_convert(local_tz)
-    df["close_time"] = df["close_time"].dt.tz_convert(local_tz)
+# ================== Fetch OHLC ==================
+def get_prices_df(symbol=API_SYMBOL, interval=INTERVAL, limit=LIMITE) -> pd.DataFrame:
+    if PRICE_SOURCE == "MARK":
+        return _klines_to_df(client.mark_price_klines(symbol=symbol, interval=interval, limit=limit))
+    if PRICE_SOURCE == "INDEX":
+        return _klines_to_df(client.index_price_klines(symbol=symbol, interval=interval, limit=limit))
 
-    for c in ["open", "high", "low", "close", "volume"]:
-        df[c] = pd.to_numeric(df[c], errors="coerce")
+    last_df = _klines_to_df(client.klines(symbol=symbol, interval=interval, limit=limit))
+    if last_df.empty or not DESPIKE_WITH_MARK:
+        return last_df
 
-    df = df.dropna(subset=["open", "high", "low", "close"])
-    df = df.set_index("open_time")
-    df.index.name = "Date"
-    df = df[["open", "high", "low", "close"]].sort_index()
-    df = df[~df.index.duplicated(keep="last")]
+    mark_df = _klines_to_df(client.mark_price_klines(symbol=symbol, interval=interval, limit=limit))
+    if mark_df.empty:
+        return last_df
 
+    df = last_df.join(mark_df, lsuffix="_L", rsuffix="_M", how="inner")
     if df.empty:
-        raise RuntimeError("DataFrame resultante vacío después de limpiar. No hay velas válidas.")
-    if not isinstance(df.index, pd.DatetimeIndex):
-        raise RuntimeError("El índice no es DatetimeIndex.")
+        return last_df
+
+    up_band = 1.0 + BAND_PCT/100.0
+    dn_band = 1.0 - BAND_PCT/100.0
+
+    adj_high = np.minimum(df["High_L"].values, df["High_M"].values * up_band)
+    adj_low  = np.maximum(df["Low_L"].values,  df["Low_M"].values  * dn_band)
+
+    o = df["Open_L"].values; c = df["Close_L"].values
+    lo_floor   = np.minimum(o, c)
+    hi_ceiling = np.maximum(o, c)
+    adj_low    = np.minimum(adj_low,  hi_ceiling)
+    adj_high   = np.maximum(adj_high, lo_floor)
+
+    out = pd.DataFrame({
+        "Open":   o,
+        "High":   adj_high,
+        "Low":    adj_low,
+        "Close":  c,
+        "Volume": df["Volume_L"].values,
+    }, index=df.index)
+    return out
+
+# ================== Plot ==================
+def plot_once():
+    src = PRICE_SOURCE
+    if PRICE_SOURCE == "LAST" and DESPIKE_WITH_MARK:
+        src = f"LAST + DESPIKE(MARK ±{BAND_PCT}%)"
+
+    print(f"Cargando {LIMITE} velas {INTERVAL} de {SYMBOL_DISPLAY} [{src}] ...")
+    df = get_prices_df()
+    if df.empty:
+        print("Sin datos.")
+        return None
+
+    mpf.plot(
+        df[["Open","High","Low","Close"]],
+        type="candle",
+        style="yahoo",
+        tight_layout=True,
+        warn_too_much_data=len(df)+1,
+        title=f"{SYMBOL_DISPLAY} ({INTERVAL}) • {src} • Horario {LOCAL_TZ}"
+    )
     return df
 
-def style():
-    return mpf.make_mpf_style(
-        base_mpl_style="classic",
-        marketcolors=mpf.make_marketcolors(up="green", down="red", edge="inherit", wick="inherit")
-    )
-
-def main():
-    ap = argparse.ArgumentParser("Velas Binance estilo TradingView (REST robusto)")
-    ap.add_argument("--mode", choices=["spot", "futures"], default="futures")
-    ap.add_argument("--testnet", action="store_true")
-    ap.add_argument("--symbol", default="ETHUSDT")
-    ap.add_argument("--interval", default="30m")
-    ap.add_argument("--limit", type=int, default=500)
-    ap.add_argument("--price-type", choices=["last","mark","index"], default="mark",
-                    help="En Futuros: tipo de precio (last, mark, index). Por defecto: mark.")
-    ap.add_argument("--png", default=None)
-    a = ap.parse_args()
+def run_loop():
+    last_df = plot_once()
+    last_close = last_df.index[-1] if last_df is not None and not last_df.empty else None
 
     try:
-        raw = fetch(a.mode, a.symbol, a.interval, a.limit, a.price_type, a.testnet)
-        df = to_df(raw)
+        while True:
+            now = datetime.now(LOCAL_TZ)
+            target = _next_close_after(now, INTERVAL)
+            sleep_for = max(0.0, (target - now).total_seconds() + REFRESH_JITTER)
+            time.sleep(sleep_for)
 
-        ref = a.price_type.upper() if a.mode == "futures" else "LAST"
-        env = "TESTNET" if a.testnet else "PROD"
-        ttl = f"{a.symbol.upper()} • {a.interval} • {ref} • {env}"
+            df = get_prices_df()
+            if df.empty:
+                continue
+            new_close = df.index[-1]
+            if last_close is not None and new_close <= last_close:
+                time.sleep(1.0)
+                continue
 
-        if a.png:
+            print(f"[Refresco] Nueva vela cerrada: {new_close}")
             mpf.plot(
-                df, type="candle", style=style(),
-                title=ttl, tight_layout=True,
-                savefig=dict(fname=a.png, dpi=150, bbox_inches="tight")
+                df[["Open","High","Low","Close"]],
+                type="candle",
+                style="yahoo",
+                tight_layout=True,
+                warn_too_much_data=len(df)+1,
+                title=f"{SYMBOL_DISPLAY} ({INTERVAL}) • {PRICE_SOURCE} • Horario {LOCAL_TZ}"
             )
-            print(f"PNG guardado en: {a.png}")
-        else:
-            mpf.plot(
-                df, type="candle", style=style(),
-                title=ttl, tight_layout=True
-            )
+            last_close = new_close
 
-    except Exception as e:
-        print(f"[ERROR] {e}", file=sys.stderr)
-        sys.exit(1)
+    except KeyboardInterrupt:
+        print("\nDetenido por el usuario. ¡Listo!")
+
+# ================== Main ==================
+def main():
+    if RUN_LOOP:
+        run_loop()
+    else:
+        plot_once()
 
 if __name__ == "__main__":
     main()
