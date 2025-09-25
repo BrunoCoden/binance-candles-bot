@@ -1,3 +1,6 @@
-requests==2.32.3
-pandas==2.2.3
-mplfinance==0.12.10b0
+binance-futures-connector
+mplfinance
+pandas
+requests
+python-dateutil
+tzdata
