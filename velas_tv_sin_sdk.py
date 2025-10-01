@@ -1,7 +1,9 @@
 # velas_TV_sin_sdk.py
 # ---------------------------------------------------------
-# Velas + Range Breakout (canal + flechas + rupturas)
-# Círculos de ruptura se dibujan sólidos (sin hueco).
+# Velas + Range Breakout (canal + flechas)
+# - SIN círculos: solo flechas ▲ (buy) y ▼ (sell)
+# - Las rupturas de canal también generan flechas
+# - Respeta filtro de tendencia por env RB_FILTER_TREND
 # ---------------------------------------------------------
 
 import os
@@ -90,7 +92,6 @@ def compute_range_breakout(df: pd.DataFrame,
     count = 0
     t = False
     arrows_buy, arrows_sell = [], []
-    breaks_up, breaks_dn = [], []
 
     highs = df['High'].values
     lows  = df['Low'].values
@@ -105,6 +106,7 @@ def compute_range_breakout(df: pd.DataFrame,
         return (high_prev >= level_now) and (high_now < level_now)
 
     for i in range(n):
+        # Inicializa canal cuando hay historial suficiente (estilo Pine)
         if i == 301:
             value[i] = hl2[i]
             vup[i]   = hl2[i] + w[i]
@@ -121,13 +123,15 @@ def compute_range_breakout(df: pd.DataFrame,
             continue
 
         low_prev, high_prev = lows[i-1], highs[i-1]
-        cross_up   = crossover(lows[i], vup[i], low_prev)
-        cross_down = crossunder(highs[i], vlo[i], high_prev)
+        cross_up   = crossover(lows[i], vup[i], low_prev)   # ruptura al techo
+        cross_down = crossunder(highs[i], vlo[i], high_prev) # ruptura al piso
 
+        # Conteo de barras fuera del canal
         if not np.isnan(vup[i]) and not np.isnan(vlo[i]):
             if lows[i] > vup[i] or highs[i] < vlo[i]:
                 count += 1
 
+        # Reset del canal
         channel_changed = False
         if (cross_up or cross_down or count == 100):
             count = 0
@@ -135,28 +139,44 @@ def compute_range_breakout(df: pd.DataFrame,
             umid[i] = (value[i] + vup[i]) / 2.0; lmid[i] = (value[i] + vlo[i]) / 2.0
             channel_changed = True
 
+        # Actualiza tendencia a partir de la ruptura
         if cross_up:
-            t = True; breaks_up.append((idx[i-1], highs[i-1]))
+            t = True
         if cross_down:
-            t = False; breaks_dn.append((idx[i-1], lows[i-1]))
+            t = False
 
         trend[i] = t
-        chage = not channel_changed
+        chage = not channel_changed  # true si el canal NO cambió en esta vela
 
+        # ====== FLECHAS POR CRUCE DE MEDIAS (en i-1, estilo Pine) ======
         if chage and not np.isnan(lmid[i]) and not np.isnan(umid[i]):
-            buy_cross = (lows[i-1] <= lmid[i]) and (lows[i] > lmid[i])
-            lb_ok = (lb == 0 or lows[i - lb] > lmid[i]) if i - lb >= 0 else True
+            buy_cross  = (lows[i-1]  <= lmid[i]) and (lows[i]  > lmid[i])
             sell_cross = (highs[i-1] >= umid[i]) and (highs[i] < umid[i])
-            lb_ok2 = (lb == 0 or highs[i - lb] < umid[i]) if i - lb >= 0 else True
 
-            buy_  = buy_cross  and lb_ok
-            sell_ = sell_cross and lb_ok2
+            lb_ok_buy  = (lb == 0 or (i - lb >= 0 and lows[i - lb]  > lmid[i]))
+            lb_ok_sell = (lb == 0 or (i - lb >= 0 and highs[i - lb] < umid[i]))
 
-            plot_buy[i]  = buy_  and (t if filter_trend else True)
-            plot_sell[i] = sell_ and ((not t) if filter_trend else True)
+            if buy_cross and lb_ok_buy and (t if filter_trend else True):
+                plot_buy[i] = True
+                arrows_buy.append((idx[i-1], lows[i-1]))
 
-            if plot_buy[i]:  arrows_buy.append((idx[i-1], lows[i-1]))
-            if plot_sell[i]: arrows_sell.append((idx[i-1], highs[i-1]))
+            if sell_cross and lb_ok_sell and ((not t) if filter_trend else True):
+                plot_sell[i] = True
+                arrows_sell.append((idx[i-1], highs[i-1]))
+
+        # ====== FLECHAS POR RUPTURA DE CANAL (en i) ======
+        if cross_up and (t if filter_trend else True):
+            plot_buy[i] = True
+            arrows_buy.append((idx[i], lows[i]))
+        if cross_down and ((not t) if filter_trend else True):
+            plot_sell[i] = True
+            arrows_sell.append((idx[i], highs[i]))
+
+        # dedupe exacto
+        if len(arrows_buy) >= 2 and arrows_buy[-1] == arrows_buy[-2]:
+            arrows_buy.pop()
+        if len(arrows_sell) >= 2 and arrows_sell[-1] == arrows_sell[-2]:
+            arrows_sell.pop()
 
     return {
         'value': pd.Series(value, index=df.index),
@@ -166,8 +186,6 @@ def compute_range_breakout(df: pd.DataFrame,
         'lower_mid': pd.Series(lmid, index=df.index),
         'arrows_buy': arrows_buy,
         'arrows_sell': arrows_sell,
-        'breaks_up': breaks_up,
-        'breaks_dn': breaks_dn,
     }
 
 # ================== Plot ==================
@@ -196,16 +214,13 @@ def plot_range_breakout(df, indi):
         mpf.make_addplot(_linebreak_like(indi['lower_mid']),   color='gray',    width=1, alpha=0.5),
     ]
 
+    # Solo flechas (sin círculos)
     buy_s  = _series_from_points(df.index, indi['arrows_buy'])
     sell_s = _series_from_points(df.index, indi['arrows_sell'])
-    up_s   = _series_from_points(df.index, indi['breaks_up'])
-    dn_s   = _series_from_points(df.index, indi['breaks_dn'])
 
     ap += [
         mpf.make_addplot(buy_s,  type='scatter', marker='^', markersize=60, color='#1dac70'),
         mpf.make_addplot(sell_s, type='scatter', marker='v', markersize=60, color='#df3a79'),
-        mpf.make_addplot(up_s,   type='scatter', marker='o', markersize=30, color='#1dac70'),
-        mpf.make_addplot(dn_s,   type='scatter', marker='o', markersize=30, color='#df3a79'),
     ]
 
     fig, axeslist = mpf.plot(
@@ -218,7 +233,6 @@ def plot_range_breakout(df, indi):
         datetime_format='%Y-%m-%d %H:%M',
         warn_too_much_data=len(df)+1
     )
-
     return fig, axeslist[0]
 
 # ================== Main ==================
@@ -226,6 +240,9 @@ def main():
     print(f"[INFO] Bajando {LIMIT} velas de {API_SYMBOL} {INTERVAL} (USDⓈ-M)")
     df = fetch_klines(API_SYMBOL, INTERVAL, LIMIT)
     indi = compute_range_breakout(df, multi=RB_MULTI, lb=RB_LB, filter_trend=RB_FILTER_TREND)
+
+    # Debug rápido: cantidades de flechas
+    print(f"[DEBUG] Flechas BUY: {len(indi['arrows_buy'])} | Flechas SELL: {len(indi['arrows_sell'])}")
 
     fig, ax = plot_range_breakout(df, indi)
 
