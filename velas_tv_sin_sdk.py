@@ -30,7 +30,7 @@ except Exception:
 # ================== Config ==================
 SYMBOL_DISPLAY   = os.getenv("SYMBOL", "ETHUSDT.P")
 API_SYMBOL       = SYMBOL_DISPLAY.replace(".P", "")
-INTERVAL         = os.getenv("INTERVAL", "1m")
+INTERVAL         = os.getenv("INTERVAL", "30m")
 LIMIT            = int(os.getenv("LIMIT", "800"))
 TZ_NAME          = os.getenv("TZ", "America/Argentina/Buenos_Aires")
 
