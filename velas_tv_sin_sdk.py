@@ -1,14 +1,11 @@
 # velas_tv_sin_sdk.py
 # ---------------------------------------------------------
 # Velas + Range Breakout (canal + flechas, sin círculos)
-# - Lee variables desde .env (load_dotenv)
-# - Loop infinito: solo velas CERRADAS → 1 fila por vela en CSV
-# - Consola formateada
-# - Gráfico opcional 1 vez al inicio (canal + flechas)
-# - plot_from_csv(): ver gráfico actualizado desde el CSV sin cortar el loop
-# - Índices únicos/ordenados en gráfico (evita InvalidIndexError)
-# - CSV guarda fecha con segundos (menos duplicados)
-# - FIX: comparación de timestamps tz-aware vs tz-naive (se unifica TZ)
+# - Loop infinito: SOLO VELAS CERRADAS → 1 fila por vela en CSV (no se bloquea)
+# - Evita duplicados con CloseTimeMs (UTC, numérico)
+# - Bandas fieles al Pine: SMA(ATR(200),100) * multi
+# - RB_INIT_BAR para alinear con bar_index de TradingView (default 301)
+# - plot_from_csv(): ver gráfico desde el CSV (usar en otro proceso)
 # ---------------------------------------------------------
 
 import os
@@ -20,7 +17,7 @@ from zoneinfo import ZoneInfo
 from datetime import datetime, timezone
 from dotenv import load_dotenv
 
-# Cargar variables desde .env (si existe)
+# Cargar .env
 load_dotenv()
 
 try:
@@ -40,10 +37,10 @@ TZ_NAME          = os.getenv("TZ", "America/Argentina/Buenos_Aires")
 RB_MULTI         = float(os.getenv("RB_MULTI", "4.0"))
 RB_LB            = int(os.getenv("RB_LB", "10"))
 RB_FILTER_TREND  = os.getenv("RB_FILTER_TREND", "false").lower() == "true"
+RB_INIT_BAR      = int(os.getenv("RB_INIT_BAR", "301"))   # para alinear con TradingView
 
 CSV_PATH         = os.getenv("CSV_PATH", "stream_table.csv").strip()
-SHOW_ON_START    = os.getenv("SHOW_ON_START", "1") != "0"
-SAVEFIG_PATH     = os.getenv("SAVEFIG", "").strip()
+SAVEFIG_PATH     = os.getenv("SAVEFIG", "").strip()       # usado sólo por plot_from_csv()
 SLEEP_FALLBACK   = int(os.getenv("SLEEP_FALLBACK", "10"))
 WARN_TOO_MUCH    = 5000
 
@@ -56,7 +53,6 @@ def interval_seconds(s: str) -> int:
     return BINANCE_INTERVAL_SECONDS.get(s, SLEEP_FALLBACK)
 
 def fmt_ts(ts: pd.Timestamp) -> str:
-    # Guardamos con segundos para minimizar duplicados
     return ts.strftime("%Y-%m-%d %H:%M:%S")
 
 # ================== Datos ==================
@@ -65,7 +61,6 @@ def get_binance_client():
     return UMFutures(base_url=base_url)
 
 def fetch_klines(symbol: str, interval: str, limit: int) -> pd.DataFrame:
-    """Obtiene klines y devuelve DataFrame indexado en tu TZ, con CloseTime/CloseTimeDT."""
     client = get_binance_client()
     data = client.klines(symbol=symbol, interval=interval, limit=limit)
     rows = []
@@ -77,7 +72,7 @@ def fetch_klines(symbol: str, interval: str, limit: int) -> pd.DataFrame:
             "Low": float(k[3]),
             "Close": float(k[4]),
             "Volume": float(k[5]),
-            "CloseTime": int(k[6]),  # fin de vela (ms, UTC)
+            "CloseTime": int(k[6]),  # fin de vela en ms (UTC)
         })
     df = pd.DataFrame(rows)
     df["Date"] = pd.to_datetime(df["OpenTime"], unit="ms", utc=True)
@@ -96,13 +91,13 @@ def _atr(df: pd.DataFrame, length: int) -> pd.Series:
     h, l, c = df['High'], df['Low'], df['Close']
     prev_c = c.shift(1)
     tr = pd.concat([(h - l), (h - prev_c).abs(), (l - prev_c).abs()], axis=1).max(axis=1)
-    return _rma(tr, length)  # Pine ta.atr usa RMA
+    return _rma(tr, length)
 
 def compute_range_breakout(df: pd.DataFrame,
                            multi: float = 4.0,
                            lb: int = 10,
                            filter_trend: bool = False):
-    """Canal + medias intermedias + flechas; rupturas se colocan en i-1 igual a Pine."""
+    """Canal + medias intermedias + flechas; rupturas colocadas en i-1 (como Pine)."""
     df = df.copy()
     df['hl2'] = (df['High'] + df['Low']) / 2.0
 
@@ -116,6 +111,7 @@ def compute_range_breakout(df: pd.DataFrame,
     vlo   = np.full(n, np.nan)
     umid  = np.full(n, np.nan)
     lmid  = np.full(n, np.nan)
+
     plot_buy  = np.full(n, False)
     plot_sell = np.full(n, False)
 
@@ -135,7 +131,8 @@ def compute_range_breakout(df: pd.DataFrame,
         return (high_prev >= level_now) and (high_now < level_now)
 
     for i in range(n):
-        if i == 301:
+        # Inicialización del canal alineable con TV
+        if i == RB_INIT_BAR:
             value[i] = hl2[i]
             vup[i]   = hl2[i] + w[i]
             vlo[i]   = hl2[i] - w[i]
@@ -144,9 +141,9 @@ def compute_range_breakout(df: pd.DataFrame,
         else:
             if i > 0:
                 value[i] = value[i-1]; vup[i] = vup[i-1]; vlo[i] = vlo[i-1]
-                umid[i] = umid[i-1];   lmid[i] = lmid[i-1]
+                umid[i]  = umid[i-1];  lmid[i] = lmid[i-1]
 
-        if i < 301:
+        if i < RB_INIT_BAR:
             continue
 
         # Rupturas (bar confirmada)
@@ -159,7 +156,7 @@ def compute_range_breakout(df: pd.DataFrame,
             if (lows[i] > vup[i]) or (highs[i] < vlo[i]):
                 count += 1
 
-        # Reset del canal ante ruptura o tras 100 velas fuera
+        # Reset del canal
         channel_changed = False
         if cross_up or cross_down or count == 100:
             count = 0
@@ -167,12 +164,11 @@ def compute_range_breakout(df: pd.DataFrame,
             umid[i]  = (value[i] + vup[i]) / 2.0; lmid[i] = (value[i] + vlo[i]) / 2.0
             channel_changed = True
 
-        # Tendencia (como en Pine)
+        # Tendencia
         if cross_up:   t = True
         if cross_down: t = False
 
-        # chage en Pine: not(value != value[1]) → True si el canal NO cambió
-        chage = not channel_changed
+        chage = not channel_changed  # igual a not(value != value[1]) en Pine
 
         # Señales por cruce de medias (en i-1)
         if chage and not np.isnan(lmid[i]) and not np.isnan(umid[i]):
@@ -189,7 +185,7 @@ def compute_range_breakout(df: pd.DataFrame,
                 plot_sell[i] = True
                 arrows_sell.append((idx[i-1], highs[i-1]))
 
-        # Señales por ruptura (también en i-1)
+        # Señales por ruptura (en i-1)
         if cross_up and (t if filter_trend else True):
             plot_buy[i] = True
             arrows_buy.append((idx[i-1], vup[i-1] if not np.isnan(vup[i-1]) else lows[i-1]))
@@ -212,7 +208,7 @@ def compute_range_breakout(df: pd.DataFrame,
         'arrows_sell': arrows_sell,
     }
 
-# ================== Helpers Plot (robustos) ==================
+# ================== Helpers Plot (para el visor) ==================
 def _unique_sorted_index(index: pd.Index) -> pd.DatetimeIndex:
     idx = pd.DatetimeIndex(pd.to_datetime(index))
     idx = idx.sort_values()
@@ -225,13 +221,11 @@ def _linebreak_like(series: pd.Series) -> pd.Series:
     return s
 
 def _series_from_points(index, points):
-    """Asegura índice único y ordenado para usar method='nearest'."""
     idx = _unique_sorted_index(index)
     s = pd.Series(np.nan, index=idx, dtype="float64")
     for ts, price in points:
         try:
             ts = pd.to_datetime(ts)
-            # Alinear TZ si corresponde
             if hasattr(idx, "tz") and idx.tz is not None:
                 if ts.tzinfo is None: ts = ts.tz_localize(idx.tz)
                 else:                  ts = ts.tz_convert(idx.tz)
@@ -256,14 +250,21 @@ def _build_overlays(df: pd.DataFrame, indi: dict):
 
 def plot_with_overlays(df: pd.DataFrame, indi: dict, title="Range Breakout"):
     ap = _build_overlays(df, indi)
-    mpf.plot(df[["Open","High","Low","Close","Volume"]],
-             type='candle', style=mpf.make_mpf_style(),
-             addplot=ap, figsize=(12,6),
-             datetime_format='%Y-%m-%d %H:%M',
-             title=title, warn_too_much_data=WARN_TOO_MUCH)
+    fig, _ = mpf.plot(
+        df[["Open","High","Low","Close","Volume"]],
+        type='candle', style=mpf.make_mpf_style(),
+        addplot=ap, returnfig=True, figsize=(12,6),
+        datetime_format='%Y-%m-%d %H:%M', title=title, warn_too_much_data=WARN_TOO_MUCH
+    )
+    if SAVEFIG_PATH:
+        try:
+            fig.savefig(SAVEFIG_PATH, dpi=130)
+            print(f"[OK] Gráfico guardado en: {SAVEFIG_PATH}")
+        except Exception:
+            pass
 
-# ================== CSV ==================
-CSV_COLUMNS = ["Date","Open","High","Low","Close","Volume","Buy","Sell"]
+# ================== CSV (clave numérica) ==================
+CSV_COLUMNS = ["CloseTimeMs","Date","Open","High","Low","Close","Volume","Buy","Sell"]
 
 def ensure_csv_header(path: str):
     if not os.path.exists(path):
@@ -272,16 +273,16 @@ def ensure_csv_header(path: str):
 def append_row_to_csv(path: str, row: dict):
     pd.DataFrame([row]).to_csv(path, mode="a", header=False, index=False, encoding="utf-8")
 
-# ================== plot_from_csv (on-demand) ==================
+# ================== plot_from_csv (on-demand, en OTRO proceso) ==================
 def plot_from_csv():
-    """Grafica canal + flechas tomando sólo velas cerradas desde el CSV (sin cortar el loop)."""
+    """Usar desde OTRO proceso o consola. El loop del bot no se detiene."""
     if not os.path.exists(CSV_PATH):
         print(f"[WARN] No existe CSV '{CSV_PATH}' todavía."); return
     df = pd.read_csv(CSV_PATH, parse_dates=["Date"])
     if df.empty:
         print("[WARN] CSV vacío."); return
-    df = df.sort_values("Date").drop_duplicates(subset=["Date"], keep="last").set_index("Date")
-    # Normalizar columnas
+    df = df.sort_values("CloseTimeMs").drop_duplicates(subset=["CloseTimeMs"], keep="last")
+    df = df.set_index("Date")
     df = df.rename(columns={c:c.capitalize() for c in df.columns})
     for c in ["Open","High","Low","Close","Volume"]:
         df[c] = pd.to_numeric(df[c], errors="coerce")
@@ -289,51 +290,43 @@ def plot_from_csv():
                                   multi=RB_MULTI, lb=RB_LB, filter_trend=RB_FILTER_TREND)
     plot_with_overlays(df, indi, title=f"{SYMBOL_DISPLAY} {INTERVAL} (desde CSV)")
 
-# ================== Loop ==================
+# ================== Loop (sin gráficos) ==================
 def run_loop():
     print(f"[INIT] {SYMBOL_DISPLAY} {INTERVAL} | TZ={TZ_NAME}")
     ensure_csv_header(CSV_PATH)
 
-    # Leer última vela logueada del CSV y UNIFICAR TZ para evitar tz-naive/aware
-    last_logged_ts = None
+    last_logged_ms = None
     if os.path.exists(CSV_PATH):
         try:
-            tail = pd.read_csv(CSV_PATH).tail(1)
-            if not tail.empty:
-                last_logged_ts = pd.to_datetime(tail["Date"].iloc[0], errors="coerce")
-                tz = ZoneInfo(TZ_NAME)
-                if pd.notna(last_logged_ts):
-                    if last_logged_ts.tzinfo is None:
-                        last_logged_ts = last_logged_ts.tz_localize(tz)
-                    else:
-                        last_logged_ts = last_logged_ts.tz_convert(tz)
-        except Exception as e:
-            print(f"[WARN] al leer CSV inicial: {e}")
-
-    first_plot_done = False
+            tail = pd.read_csv(CSV_PATH, usecols=["CloseTimeMs"]).tail(1)
+            if not tail.empty: last_logged_ms = int(tail["CloseTimeMs"].iloc[0])
+        except Exception:
+            pass
 
     while True:
         try:
             df = fetch_klines(API_SYMBOL, INTERVAL, LIMIT)
             now_utc_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
 
-            # Sólo velas CERRADAS
+            # Solo velas CERRADAS
             df_closed = df[df["CloseTime"] <= now_utc_ms]
             if df_closed.empty:
                 time.sleep(SLEEP_FALLBACK); continue
 
-            # Última vela cerrada (índice ya tz-aware en TZ_NAME)
             last_row = df_closed.iloc[-1]
-            last_ts  = df_closed.index[-1]
+            last_ts  = df_closed.index[-1]        # tz-aware
+            last_ms  = int(last_row["CloseTime"]) # clave numérica
 
-            # Comparación segura (ambos tz-aware)
-            if (last_logged_ts is None) or (last_ts > last_logged_ts):
-                indi = compute_range_breakout(df_closed[["Open","High","Low","Close","Volume"]],
-                                              multi=RB_MULTI, lb=RB_LB, filter_trend=RB_FILTER_TREND)
+            if (last_logged_ms is None) or (last_ms > last_logged_ms):
+                indi = compute_range_breakout(
+                    df_closed[["Open","High","Low","Close","Volume"]],
+                    multi=RB_MULTI, lb=RB_LB, filter_trend=RB_FILTER_TREND
+                )
                 buy_flag  = bool(indi['buy_flag'].iloc[-1])
                 sell_flag = bool(indi['sell_flag'].iloc[-1])
 
                 row = {
+                    "CloseTimeMs": last_ms,
                     "Date":   fmt_ts(last_ts),
                     "Open":   round(float(last_row["Open"]), 2),
                     "High":   round(float(last_row["High"]), 2),
@@ -348,20 +341,9 @@ def run_loop():
                 sig = "▲ BUY" if buy_flag and not sell_flag else "▼ SELL" if sell_flag and not buy_flag else " "
                 print(f"[{row['Date']}]  O:{row['Open']:>8}  H:{row['High']:>8}  L:{row['Low']:>8}  C:{row['Close']:>8}  Vol:{row['Volume']:>10}   Sig:{sig}")
 
-                if SHOW_ON_START and not first_plot_done:
-                    plot_with_overlays(df_closed[["Open","High","Low","Close","Volume"]], indi, title="Inicio")
-                    if SAVEFIG_PATH:
-                        try:
-                            import matplotlib.pyplot as plt
-                            plt.gcf().savefig(SAVEFIG_PATH, dpi=130)
-                            print(f"[OK] Gráfico guardado en: {SAVEFIG_PATH}")
-                        except Exception:
-                            pass
-                    first_plot_done = True
+                last_logged_ms = last_ms
 
-                last_logged_ts = last_ts
-
-            # Dormir hasta el próximo cierre de vela (según CloseTime de la vela en formación)
+            # Dormir hasta el próximo cierre de vela
             next_close_ms = int(df.iloc[-1]["CloseTime"])
             now_utc = datetime.now(timezone.utc).timestamp()
             eta = max(2, int((next_close_ms/1000) - now_utc) + 1)
