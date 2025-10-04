@@ -1,5 +1,5 @@
 {
-  "last_update_id": 464107231,
+  "last_update_id": 464107232,
   "targets": {
     "436048117": {
       "type": "private",
@@ -11,7 +11,7 @@
     },
     "-1003197523683": {
       "type": "supergroup",
-      "title": "Bruno y Diego"
+      "title": "pruebas de grupos"
     }
   }
 }
