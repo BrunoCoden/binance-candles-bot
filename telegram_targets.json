@@ -1,5 +1,9 @@
 {
+<<<<<<< HEAD
   "last_update_id": 464107235,
+=======
+  "last_update_id": 464107244,
+>>>>>>> e87f993 (chore: Última versión antes de abrir repo nuevo para Qbands)
   "targets": {
     "436048117": {
       "type": "private",

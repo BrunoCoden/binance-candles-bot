@@ -1,30 +1,31 @@
 # alertas_desde_csv.py
 # ---------------------------------------------------------
-# Lee el stream CSV generado por velas_TV_sin_sdk.py y dispara alertas
-# cuando detecta nuevas velas cerradas con Buy=1 o Sell=1.
+# Lee el CSV generado por velas/tu loop y dispara alertas cuando
+# detecta nuevas velas cerradas con Buy=1 o Sell=1.
 #
 # Soporta:
 #   - Consola (siempre)
-#   - Beep Windows (winsound) opcional
+#   - Beep (winsound) opcional
 #   - Notificación Windows (win10toast) opcional
 #   - Webhook genérico opcional
 #   - Telegram:
-#       * TELEGRAM_CHAT_ID: envía a un chat fijo
-#       * TELEGRAM_BROADCAST_ALL=1: difunde a todos los grupos/chats conocidos
-#         (descubiertos con getUpdates y guardados en telegram_targets.json)
+#       * TELEGRAM_CHAT_ID: envía a un chat fijo (privado o grupo -100...)
+#       * TELEGRAM_BROADCAST_ALL=1: difunde a todos los chats del targets.json
+#         o aprendidos por getUpdates (guardados en telegram_targets.json)
 #
-# ENV (en alerts.env):
-#   CSV_PATH=stream_table.csv
+# ENV (en alerts.env o .env):
+#   CSV_PATH=tabla.csv
 #   SYMBOL=ETHUSDT.P
 #   ALERT_POLL_SEC=2
 #   ENABLE_BEEP=1
 #   ENABLE_TOAST=0
-#   TELEGRAM_BOT_TOKEN=...
-#   TELEGRAM_CHAT_ID=-1001234567890  (opcional)
+#   ALERT_WEBHOOK_URL=https://...
+#   TELEGRAM_BOT_TOKEN=123456789:AA...
+#   TELEGRAM_CHAT_ID=-1001234567890   (opcional)
 #   TELEGRAM_BROADCAST_ALL=1
 #   TELEGRAM_TARGETS_PATH=telegram_targets.json
 #   TELEGRAM_REFRESH_UPDATES_SEC=60
-#   ALERT_TEST=1   -> dispara alerta de prueba al inicio
+#   ALERT_TEST=1           -> dispara alerta de prueba al inicio
 # ---------------------------------------------------------
 
 import os
@@ -34,17 +35,20 @@ import platform
 from typing import Optional, List
 import pandas as pd
 
-# Cargar automáticamente variables desde alerts.env (si existe)
+# ===== Carga de entorno (alerts.env o fallback .env) =====
 try:
     from dotenv import load_dotenv
     if os.path.exists("alerts.env"):
         load_dotenv("alerts.env")
+    else:
+        if os.path.exists(".env"):
+            load_dotenv(".env")
 except Exception:
     pass
 
 # ===== Config =====
-CSV_PATH        = os.getenv("CSV_PATH", "stream_table.csv")
-SYMBOL          = os.getenv("SYMBOL", "ETHUSDT.P")
+CSV_PATH        = os.getenv("CSV_PATH", "stream_table.csv").strip()
+SYMBOL          = os.getenv("SYMBOL", "ETHUSDT.P").strip()
 POLL_SEC        = int(os.getenv("ALERT_POLL_SEC", "2"))
 
 ENABLE_BEEP     = os.getenv("ENABLE_BEEP", "1") == "1"
@@ -76,6 +80,7 @@ def _beep():
             winsound.Beep(880, 200)
             winsound.Beep(660, 150)
         else:
+            # campanita estándar en *nix
             print("\a", end="", flush=True)
     except Exception:
         pass
@@ -103,20 +108,56 @@ def _fmt_row(r) -> str:
 
 # ---------- Telegram helpers ----------
 class TelegramTargets:
+    """
+    Soporta dos formatos de archivo:
+      A) dict:
+         {
+           "last_update_id": 0,
+           "targets": {
+             "<chat_id>": {"type": "...", "title": "..."},
+             ...
+           }
+         }
+      B) lista:
+         [
+           {"chat_id": -100..., "name": "grupo", "type": "supergroup"},
+           {"chat_id": 123...,   "title": "privado", "type": "private"}
+         ]
+    """
     def __init__(self, path: str):
         self.path = path
         self.data = {"last_update_id": 0, "targets": {}}
         self._load()
 
     def _load(self):
-        if os.path.exists(self.path):
-            try:
-                with open(self.path, "r", encoding="utf-8") as f:
-                    self.data = json.load(f)
+        if not os.path.exists(self.path):
+            # inicial vacío
+            self.data = {"last_update_id": 0, "targets": {}}
+            return
+        try:
+            with open(self.path, "r", encoding="utf-8") as f:
+                raw = json.load(f)
+            # Formato A (dict con "targets")
+            if isinstance(raw, dict) and "targets" in raw:
+                self.data = raw
                 self.data.setdefault("last_update_id", 0)
                 self.data.setdefault("targets", {})
-            except Exception:
+            # Formato B (lista de objetos con chat_id)
+            elif isinstance(raw, list):
                 self.data = {"last_update_id": 0, "targets": {}}
+                for item in raw:
+                    cid = item.get("chat_id")
+                    if cid is None:
+                        continue
+                    cid = str(cid)
+                    title = item.get("name") or item.get("title") or ""
+                    ttype = item.get("type", "")
+                    if cid not in self.data["targets"]:
+                        self.data["targets"][cid] = {"type": ttype, "title": title}
+            else:
+                self.data = {"last_update_id": 0, "targets": {}}
+        except Exception:
+            self.data = {"last_update_id": 0, "targets": {}}
 
     def save(self):
         try:
@@ -138,9 +179,11 @@ class TelegramTargets:
     def add_chat(self, chat_id: int | str, chat_type: str, title: str):
         chat_id = str(chat_id)
         if chat_id not in self.data["targets"]:
-            self.data["targets"][chat_id] = {"type": chat_type, "title": title or ""}
+            self.data["targets"][chat_id] = {"type": chat_type or "", "title": title or ""}
         else:
-            self.data["targets"][chat_id]["type"] = chat_type
+            # actualizar metadatos
+            if chat_type:
+                self.data["targets"][chat_id]["type"] = chat_type
             if title:
                 self.data["targets"][chat_id]["title"] = title
 
@@ -148,21 +191,24 @@ class TelegramTargets:
         return list(self.data.get("targets", {}).keys())
 
 def tg_api(method: str, payload: dict):
-    if not (TG_TOKEN and requests):
+    if not TG_TOKEN or not requests:
         return None
     url = f"https://api.telegram.org/bot{TG_TOKEN}/{method}"
     try:
         r = requests.post(url, json=payload, timeout=10)
         if r.status_code == 200:
             return r.json()
-    except Exception:
-        pass
+        else:
+            print(f"[WARN] Telegram HTTP {r.status_code}: {r.text}")
+    except Exception as e:
+        print(f"[WARN] Telegram error: {e}")
     return None
 
 def tg_send_text(chat_id: str | int, text: str):
-    tg_api("sendMessage", {"chat_id": chat_id, "text": text})
+    return tg_api("sendMessage", {"chat_id": chat_id, "text": text})
 
 def tg_collect_updates(store: TelegramTargets):
+    # Levanta updates para aprender chats nuevos y persistirlos.
     offset = store.last_update_id + 1 if store.last_update_id else None
     payload = {"timeout": 0, "allowed_updates": ["message", "my_chat_member", "chat_member", "channel_post"]}
     if offset:
@@ -194,20 +240,26 @@ def _notify_all(signal: str, row: pd.Series):
     _beep()
     _toast(f"{SYMBOL} — {signal}", _fmt_row(row))
     _post_webhook({"symbol": SYMBOL, "signal": signal, "data": dict(row)})
+
     if not (TG_TOKEN and requests):
         return
+
+    # Chat fijo (si está)
     if TG_CHAT_ID:
         try:
             tg_send_text(TG_CHAT_ID, text)
         except Exception:
             pass
+
+    # Broadcast (si está activo)
     if TG_BROADCAST:
         store = TelegramTargets(TG_TARGETS_PATH)
         try:
-            tg_collect_updates(store)
+            tg_collect_updates(store)  # aprende chats si hay activity
         except Exception:
             pass
         for cid in store.list_chat_ids():
+            # evita duplicar si TG_CHAT_ID coincide
             if TG_CHAT_ID and str(cid) == str(TG_CHAT_ID):
                 continue
             try:
@@ -228,7 +280,9 @@ def _load_df_safe() -> Optional[pd.DataFrame]:
 def run_alerts():
     print(f"[INFO] Alertas CSV: {CSV_PATH} | SYMBOL={SYMBOL} | poll={POLL_SEC}s")
     if TG_TOKEN:
-        print(f"[INFO] Telegram bot activo. Broadcast={'ON' if TG_BROADCAST else 'OFF'} | targets={TG_TARGETS_PATH}")
+        print(f"[INFO] Telegram bot: ON | Broadcast={'ON' if TG_BROADCAST else 'OFF'} | targets={TG_TARGETS_PATH}")
+    else:
+        print(f"[WARN] Telegram bot: OFF (sin TELEGRAM_BOT_TOKEN)")
 
     if ALERT_TEST:
         dummy = pd.Series({"Date": "TEST", "Open": 0, "High": 0, "Low": 0, "Close": 0, "Volume": 0})
@@ -247,8 +301,11 @@ def run_alerts():
             if df is None or df.empty:
                 time.sleep(POLL_SEC)
                 continue
+
             key_col = "CloseTimeMs" if "CloseTimeMs" in df.columns else "Date"
             df = df.sort_values(key_col)
+
+            # detectar nuevas filas
             if last_key is None:
                 new_rows = df.tail(1)
             else:
@@ -262,16 +319,22 @@ def run_alerts():
                         new_rows = df.loc[pos[0]+1:] if len(pos) else df.tail(1)
                 except Exception:
                     new_rows = df.tail(1)
+
+            # procesar nuevas señales
             for _, r in new_rows.iterrows():
-                buy = int(r.get("Buy", 0)) if pd.notna(r.get("Buy", None)) else 0
+                buy  = int(r.get("Buy", 0))  if pd.notna(r.get("Buy", None))  else 0
                 sell = int(r.get("Sell", 0)) if pd.notna(r.get("Sell", None)) else 0
+
                 if buy == 1 and sell != 1:
                     _notify_all("▲ BUY", r)
                 elif sell == 1 and buy != 1:
                     _notify_all("▼ SELL", r)
                 elif buy == 1 and sell == 1:
                     _notify_all("⚠ Señales simultáneas (BUY & SELL)", r)
+
                 last_key = r.get(key_col, last_key)
+
+            # refrescar updates cada TG_REFRESH_SEC para aprender chats
             now = time.time()
             if TG_TOKEN and TG_BROADCAST and requests and (now - last_refresh >= TG_REFRESH_SEC):
                 try:
@@ -280,7 +343,9 @@ def run_alerts():
                 except Exception:
                     pass
                 last_refresh = now
+
             time.sleep(POLL_SEC)
+
         except KeyboardInterrupt:
             print("\n[EXIT] Cortado por usuario.")
             break
@@ -288,5 +353,6 @@ def run_alerts():
             print(f"[WARN] {type(e).__name__}: {e}")
             time.sleep(POLL_SEC)
 
+# ---------- Main ----------
 if __name__ == "__main__":
     run_alerts()
