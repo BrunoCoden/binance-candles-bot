@@ -104,6 +104,7 @@ except Exception:
             tr = pd.concat([(h - l), (h - prev_c).abs(), (l - prev_c).abs()], axis=1).max(axis=1)
             return _rma(tr, length)
         def compute_channels(df: pd.DataFrame, multi: float = 4.0, init_bar: int = 301) -> pd.DataFrame:
+            """Devuelve Value/ValueUpper/.../LowerQ + TrendDir (idéntico al principal)."""
             df = df.copy()
             df['hl2'] = (df['High'] + df['Low']) / 2.0
             atr200 = _atr(df, 200)
@@ -114,6 +115,8 @@ except Exception:
             vlo   = np.full(n, np.nan)
             umid  = np.full(n, np.nan)
             lmid  = np.full(n, np.nan)
+            trend = np.full(n, np.nan)
+            current_trend = np.nan
             highs = df['High'].values
             lows  = df['Low'].values
             hl2   = df['hl2'].values
@@ -151,6 +154,11 @@ except Exception:
                     vlo[i]   = hl2[i] - w[i]
                     umid[i]  = (value[i] + vup[i]) / 2.0
                     lmid[i]  = (value[i] + vlo[i]) / 2.0
+                if cross_up:
+                    current_trend = 1.0
+                elif cross_down:
+                    current_trend = -1.0
+                trend[i] = current_trend
             upper_q = (umid + vup) / 2.0
             lower_q = (lmid + vlo) / 2.0
             return pd.DataFrame({
@@ -161,6 +169,7 @@ except Exception:
                 'LowerMid': lmid,
                 'UpperQ': upper_q,
                 'LowerQ': lower_q,
+                'TrendDir': trend,
             }, index=df.index)
     except Exception:
         # sin conector no podremos calcular niveles faltantes

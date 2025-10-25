@@ -166,7 +166,7 @@ def _atr(df: pd.DataFrame, length: int) -> pd.Series:
 def compute_channels(df: pd.DataFrame, multi: float = 4.0, init_bar: int = 301) -> pd.DataFrame:
     """
     Devuelve DataFrame con:
-      Value, ValueUpper, ValueLower, UpperMid, LowerMid, UpperQ, LowerQ
+      Value, ValueUpper, ValueLower, UpperMid, LowerMid, UpperQ, LowerQ, TrendDir
     """
     df = df.copy()
     df['hl2'] = (df['High'] + df['Low']) / 2.0
@@ -185,6 +185,8 @@ def compute_channels(df: pd.DataFrame, multi: float = 4.0, init_bar: int = 301) 
     lows  = df['Low'].values
     hl2   = df['hl2'].values
     w     = width.values
+    trend = np.full(n, np.nan)
+    current_trend = np.nan
 
     def crossed_up(prev_val, curr_val, prev_lvl, curr_lvl):
         return (prev_val <= prev_lvl) and (curr_val > curr_lvl)
@@ -226,6 +228,13 @@ def compute_channels(df: pd.DataFrame, multi: float = 4.0, init_bar: int = 301) 
             umid[i]  = (value[i] + vup[i]) / 2.0
             lmid[i]  = (value[i] + vlo[i]) / 2.0
 
+        if cross_up:
+            current_trend = 1.0
+        elif cross_down:
+            current_trend = -1.0
+
+        trend[i] = current_trend
+
     upper_q = (umid + vup) / 2.0
     lower_q = (lmid + vlo) / 2.0
 
@@ -237,6 +246,7 @@ def compute_channels(df: pd.DataFrame, multi: float = 4.0, init_bar: int = 301) 
         'LowerMid': lmid,
         'UpperQ': upper_q,
         'LowerQ': lower_q,
+        'TrendDir': trend,
     }, index=df.index)
 
 # ================== CSV helpers ==================
@@ -271,7 +281,7 @@ def _align_channels_to_stream(ch30: pd.DataFrame, idx1m: pd.DatetimeIndex) -> pd
     """Extiende canales 30m a grilla 1m por forward-fill."""
     if ch30 is None or ch30.empty:
         return pd.DataFrame(index=idx1m)
-    want = ["Value","ValueUpper","ValueLower","UpperMid","LowerMid","UpperQ","LowerQ"]
+    want = ["Value","ValueUpper","ValueLower","UpperMid","LowerMid","UpperQ","LowerQ","TrendDir"]
     for c in want:
         if c not in ch30.columns:
             ch30[c] = pd.NA
