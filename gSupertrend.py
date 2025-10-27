@@ -1,10 +1,10 @@
-# grafico_de_script_principal_solo_bandas.py
+# gSupertrend.py
 import os
 import numpy as np
 import pandas as pd
 import mplfinance as mpf
 
-from script_principal_de_velas_solo_bandas import (
+from velas import (
     compute_channels,
     SYMBOL_DISPLAY, API_SYMBOL,
     CHANNEL_INTERVAL, STREAM_INTERVAL,
@@ -23,7 +23,6 @@ SUPER_FACTOR     = float(os.getenv("SUPER_FACTOR", "3.0"))
 SUPER_LINE_WIDTH = float(os.getenv("SUPER_LINE_WIDTH", "2.6"))
 COLOR_BULL_LINE  = os.getenv("COLOR_BULL_LINE",  "#1dac70")
 COLOR_BEAR_LINE  = os.getenv("COLOR_BEAR_LINE",  "#df3a79")
-CHANNEL_FILL_ALPHA = float(os.getenv("CHANNEL_FILL_ALPHA", "0.18"))
 SUPER_FILL_ALPHA   = float(os.getenv("SUPER_FILL_ALPHA", "0.12"))
 
 def _linebreak_like(s: pd.Series) -> pd.Series:
@@ -257,38 +256,6 @@ def main():
         ap.append(mpf.make_addplot(upper_bear, color=COLOR_BEAR_LINE, width=1.8))
     if _has_data(lower_bear):
         ap.append(mpf.make_addplot(lower_bear, color=COLOR_BEAR_LINE, width=1.8))
-
-    if _has_data(value_upper) and _has_data(value_lower):
-        arr_up = value_upper.to_numpy(dtype=float)
-        arr_lo = value_lower.to_numpy(dtype=float)
-        mask_bull = (~np.isnan(arr_up)) & (~np.isnan(arr_lo)) & (bull_mask.to_numpy(dtype=bool))
-        mask_bear = (~np.isnan(arr_up)) & (~np.isnan(arr_lo)) & (bear_mask.to_numpy(dtype=bool))
-        if mask_bull.any():
-            ap.append(mpf.make_addplot(
-                value_upper,
-                color=COLOR_BULL_LINE,
-                width=0,
-                fill_between=dict(
-                    y1=arr_up,
-                    y2=arr_lo,
-                    where=mask_bull,
-                    alpha=CHANNEL_FILL_ALPHA,
-                    color=COLOR_BULL_LINE
-                )
-            ))
-        if mask_bear.any():
-            ap.append(mpf.make_addplot(
-                value_upper,
-                color=COLOR_BEAR_LINE,
-                width=0,
-                fill_between=dict(
-                    y1=arr_up,
-                    y2=arr_lo,
-                    where=mask_bear,
-                    alpha=CHANNEL_FILL_ALPHA,
-                    color=COLOR_BEAR_LINE
-                )
-            ))
 
     st_full = st_aligned.get('supertrend')
     st_dir  = st_aligned.get('direction')
