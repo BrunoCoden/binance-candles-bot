@@ -1,31 +1,27 @@
-# alerts.py
 import os
 import numpy as np
 import pandas as pd
 import requests
 from zoneinfo import ZoneInfo
 
-from velas import (
-    compute_channels,
-    SYMBOL_DISPLAY, API_SYMBOL,
-    CHANNEL_INTERVAL, STREAM_INTERVAL,
-    RB_MULTI, RB_INIT_BAR
-)
 from paginado_binance import fetch_klines_paginado
-from gSupertrend import compute_supertrend, _align_channels_to_stream, _has_data
+from tabla_alertas import log_stream_bar
+from velas import (
+    SYMBOL_DISPLAY,
+    API_SYMBOL,
+    STREAM_INTERVAL,
+    BB_DIRECTION,
+    BB_LENGTH,
+    BB_MULT,
+    compute_bollinger_bands,
+)
 
-ALERT_STREAM_BARS = int(os.getenv("ALERT_STREAM_BARS", "600"))
-ALERT_CHANNEL_BARS = int(os.getenv("ALERT_CHANNEL_BARS", "300"))
-ALERT_TOUCH_TOL = float(os.getenv("ALERT_TOUCH_TOL", "0.0"))
-SUPER_ATR_PERIOD = int(os.getenv("SUPER_ATR_PERIOD", "10"))
-SUPER_FACTOR = float(os.getenv("SUPER_FACTOR", "3.0"))
+
+ALERT_STREAM_BARS = int(os.getenv("ALERT_STREAM_BARS", "5000"))
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 _chat_ids_raw = os.getenv("TELEGRAM_CHAT_IDS", "")
-TELEGRAM_CHAT_IDS = [
-    part.strip()
-    for part in _chat_ids_raw.replace(";", ",").split(",")
-    if part.strip()
-]
+TELEGRAM_CHAT_IDS = [part.strip() for part in _chat_ids_raw.replace(";", ",").split(",") if part.strip()]
+
 LOCAL_TZ_NAME = os.getenv("TZ", "UTC")
 try:
     LOCAL_TZ = ZoneInfo(LOCAL_TZ_NAME)
@@ -33,137 +29,94 @@ except Exception:
     LOCAL_TZ = ZoneInfo("UTC")
 
 
-def _prepare_frames():
-    same_tf = STREAM_INTERVAL == CHANNEL_INTERVAL
-
+def _prepare_frames() -> dict | None:
     df_stream = fetch_klines_paginado(API_SYMBOL, STREAM_INTERVAL, ALERT_STREAM_BARS)
     if df_stream.empty:
         return None
 
     ohlc_stream = df_stream[["Open", "High", "Low", "Close", "Volume"]]
-
-    if same_tf:
-        df_channel = df_stream
-    else:
-        df_channel = fetch_klines_paginado(API_SYMBOL, CHANNEL_INTERVAL, ALERT_CHANNEL_BARS)
-        if df_channel.empty:
-            return None
-
-    ohlc_channel = df_channel[["Open", "High", "Low", "Close", "Volume"]]
-
-    channels = compute_channels(ohlc_channel, multi=RB_MULTI, init_bar=RB_INIT_BAR)
-
-    if same_tf:
-        chans_plot = channels.reindex(ohlc_stream.index).ffill()
-    else:
-        chans_plot = _align_channels_to_stream(channels, ohlc_stream.index)
-
-    st_channel = compute_supertrend(ohlc_channel, atr_period=SUPER_ATR_PERIOD, factor=SUPER_FACTOR)
-
-    if same_tf:
-        st_aligned = st_channel.reindex(ohlc_stream.index).ffill()
-    else:
-        idx = ohlc_stream.index.union(st_channel.index)
-        st_aligned = st_channel.reindex(idx).sort_index().ffill().reindex(ohlc_stream.index)
+    bb = compute_bollinger_bands(ohlc_stream, BB_LENGTH, BB_MULT)
+    bb_aligned = bb.reindex(ohlc_stream.index).ffill()
 
     return {
         "stream": ohlc_stream,
-        "channels": chans_plot,
-        "supertrend": st_aligned
+        "bollinger": bb_aligned,
     }
 
 
-def _supertrend_alert(st_aligned: pd.DataFrame):
-    if st_aligned is None or st_aligned.empty:
+def _bollinger_alert(bb_aligned: pd.DataFrame, ohlc_stream: pd.DataFrame):
+    if bb_aligned is None or bb_aligned.empty or ohlc_stream.empty:
         return None
 
-    direction = st_aligned.get("direction")
-    supertrend_line = st_aligned.get("supertrend")
-    if direction is None or supertrend_line is None:
+    close = ohlc_stream["Close"].astype("float64")
+    upper = bb_aligned.get("upper")
+    lower = bb_aligned.get("lower")
+    basis = bb_aligned.get("basis")
+
+    if upper is None or lower is None or close.empty:
         return None
 
-    dir_series = direction.astype("float64")
-    if dir_series.empty or dir_series.isna().all():
+    if len(close) < 2 or len(upper) < 2 or len(lower) < 2:
         return None
 
-    last_idx = dir_series.index[-1]
-    prev = dir_series.shift(1)
-    if pd.isna(dir_series.iloc[-1]) or pd.isna(prev.iloc[-1]):
+    last_idx = close.index[-1]
+    close_now = float(close.iloc[-1])
+    close_prev = float(close.iloc[-2])
+    upper_now = float(upper.iloc[-1])
+    upper_prev = float(upper.iloc[-2])
+    lower_now = float(lower.iloc[-1])
+    lower_prev = float(lower.iloc[-2])
+
+    if any(np.isnan(val) for val in (close_now, close_prev, upper_now, upper_prev, lower_now, lower_prev)):
         return None
 
-    if dir_series.iloc[-1] == prev.iloc[-1]:
+    crossed_lower = close_prev <= lower_prev and close_now > lower_now
+    crossed_upper = close_prev >= upper_prev and close_now < upper_now
+
+    direction_filter = BB_DIRECTION
+
+    if crossed_lower and direction_filter != -1:
+        trend = "alcista"
+        direction = "long"
+        ref_price = lower_now
+        trigger_price = lower_now
+    elif crossed_upper and direction_filter != 1:
+        trend = "bajista"
+        direction = "short"
+        ref_price = upper_now
+        trigger_price = upper_now
+    else:
         return None
 
-    trend = "alcista" if dir_series.iloc[-1] < 0 else "bajista"
-    price = supertrend_line.iloc[-1]
+    last_bar = ohlc_stream.iloc[-1]
+    volume = float(last_bar.get("Volume", np.nan))
+    basis_now = float(basis.iloc[-1]) if basis is not None else np.nan
 
     return {
-        "type": "supertrend_change",
+        "type": "bollinger_signal",
         "timestamp": last_idx,
-        "message": f"{SYMBOL_DISPLAY} {STREAM_INTERVAL}: Supertrend {trend} en {price:.2f}"
+        "message": (
+            f"{SYMBOL_DISPLAY} {STREAM_INTERVAL}: Señal Bollinger {trend} en {trigger_price:.2f} "
+            f"(banda de referencia {ref_price:.2f})"
+        ),
+        "price": trigger_price,
+        "direction": direction,
+        "basis": basis_now,
+        "reference_band": ref_price,
+        "volume": volume,
     }
 
 
-def _touch_alerts(ohlc_stream: pd.DataFrame, channels: pd.DataFrame):
-    if ohlc_stream is None or ohlc_stream.empty:
-        return []
 
-    latest = ohlc_stream.iloc[-1]
-    idx = ohlc_stream.index[-1]
-
-    val_upper = channels.get("ValueUpper")
-    val_lower = channels.get("ValueLower")
-
-    alerts = []
-
-    if _has_data(val_upper):
-        upper_level = float(val_upper.iloc[-1])
-        if not np.isnan(upper_level):
-            touched = _touched_level(latest, upper_level)
-            if touched:
-                alerts.append({
-                    "type": "value_upper_touch",
-                    "timestamp": idx,
-                    "message": f"{SYMBOL_DISPLAY} {STREAM_INTERVAL}: Toque en ValueUpper {upper_level:.2f}"
-                })
-
-    if _has_data(val_lower):
-        lower_level = float(val_lower.iloc[-1])
-        if not np.isnan(lower_level):
-            touched = _touched_level(latest, lower_level)
-            if touched:
-                alerts.append({
-                    "type": "value_lower_touch",
-                    "timestamp": idx,
-                    "message": f"{SYMBOL_DISPLAY} {STREAM_INTERVAL}: Toque en ValueLower {lower_level:.2f}"
-                })
-
-    return alerts
-
-
-def _touched_level(bar: pd.Series, level: float) -> bool:
-    high = float(bar["High"])
-    low = float(bar["Low"])
-    if ALERT_TOUCH_TOL > 0:
-        tol = max(level * ALERT_TOUCH_TOL, 1e-8)
-        return (low - tol) <= level <= (high + tol)
-    return low <= level <= high
-
-
-def generate_alerts():
+def generate_alerts() -> list[dict]:
     frames = _prepare_frames()
     if not frames:
         return []
 
-    alerts = []
+    log_stream_bar(frames["stream"])
 
-    st_alert = _supertrend_alert(frames["supertrend"])
-    if st_alert:
-        alerts.append(st_alert)
-
-    alerts.extend(_touch_alerts(frames["stream"], frames["channels"]))
-
-    return alerts
+    alert = _bollinger_alert(frames["bollinger"], frames["stream"])
+    return [alert] if alert else []
 
 
 def format_alert_message(alert: dict) -> str:
@@ -229,17 +182,8 @@ if __name__ == "__main__":
     for alert in alerts:
         print(f"[ALERTA] {format_alert_message(alert)}")
 
-    test_alert = {
-        "type": "test_notification",
-        "timestamp": pd.Timestamp.now(tz=LOCAL_TZ),
-        "message": f"{SYMBOL_DISPLAY} {STREAM_INTERVAL}: alerta de prueba de Telegram"
-    }
-    print(f"[ALERTA][PRUEBA] {format_alert_message(test_alert)}")
-
-    outgoing_alerts = alerts + [test_alert]
-
     if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_IDS:
-        sent = send_alerts(outgoing_alerts)
+        sent = send_alerts(alerts)
         print(f"[INFO] Alertas enviadas a Telegram: {sent}")
     else:
         print("[WARN] TELEGRAM_BOT_TOKEN o TELEGRAM_CHAT_IDS no configurados; no se enviaron mensajes.")

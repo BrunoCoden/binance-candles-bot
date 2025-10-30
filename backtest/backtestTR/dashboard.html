@@ -1,0 +1,696 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="utf-8" />
+    <title>Dashboard Estrategia Bollinger</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #111827;
+            color: #f9fafb;
+            margin: 0;
+            padding: 0 24px 48px;
+        }
+        h1 {
+            margin-top: 32px;
+            text-align: center;
+        }
+        h2 {
+            margin-top: 32px;
+            border-left: 4px solid #2563eb;
+            padding-left: 12px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 16px;
+            background: #1f2937;
+        }
+        th, td {
+            padding: 8px 12px;
+            border-bottom: 1px solid #374151;
+            text-align: left;
+        }
+        th {
+            color: #60a5fa;
+            width: 30%;
+        }
+        .trades-table th {
+            background: #111827;
+        }
+        .trades-table tbody tr:nth-child(even) {
+            background: #111827;
+        }
+        .plot-container {
+            margin-top: 32px;
+        }
+        a.download {
+            display: inline-block;
+            margin-top: 24px;
+            padding: 10px 16px;
+            background: #2563eb;
+            color: white;
+            text-decoration: none;
+            border-radius: 6px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Dashboard Estrategia Bollinger</h1>
+    
+    <section class="summary">
+        <h2>Resumen</h2>
+        <table>
+            <tr><th>Total trades</th><td>125</td></tr><tr><th>Wins</th><td>76</td></tr><tr><th>Losses</th><td>48</td></tr><tr><th>Win rate %</th><td>60.80</td></tr><tr><th>Total PnL %</th><td>-15.96</td></tr><tr><th>Avg PnL %</th><td>-0.13</td></tr><tr><th>Max Drawdown %</th><td>-24.18</td></tr>
+        </table>
+    </section>
+    
+    <div class="plot-container">
+        <div>                        <script type="text/javascript">window.PlotlyConfig = {MathJaxConfig: 'local'};</script>
+        <script charset="utf-8" src="https://cdn.plot.ly/plotly-3.1.1.min.js" integrity="sha256-HUEFyfiTnZJxCxur99FjbKYTvKSzwDaD3/x5TqHpFu4=" crossorigin="anonymous"></script>                <div id="431b2c33-a7ed-4f23-9e79-049f2f184f7c" class="plotly-graph-div" style="height:780px; width:100%;"></div>            <script type="text/javascript">                window.PLOTLYENV=window.PLOTLYENV || {};                                if (document.getElementById("431b2c33-a7ed-4f23-9e79-049f2f184f7c")) {                    Plotly.newPlot(                        "431b2c33-a7ed-4f23-9e79-049f2f184f7c",                        [{"hovertemplate":"%{x}\u003cbr\u003eClose: %{y:.2f}\u003cextra\u003e\u003c\u002fextra\u003e","line":{"color":"#222","width":1.2},"name":"Close","x":["2025-10-28T07:30:00-03:00","2025-10-28T08:00:00-03:00","2025-10-28T08:00:00-03:00","2025-10-28T08:00:00-03:00","2025-10-28T08:30:00-03:00","2025-10-28T08:30:00-03:00","2025-10-28T08:30:00-03:00","2025-10-28T09:00:00-03:00","2025-10-28T09:00:00-03:00","2025-10-28T09:30:00-03:00","2025-10-28T09:30:00-03:00","2025-10-28T10:00:00-03:00","2025-10-28T10:00:00-03:00","2025-10-28T10:00:00-03:00","2025-10-28T10:30:00-03:00","2025-10-28T10:30:00-03:00","2025-10-28T11:00:00-03:00","2025-10-28T11:00:00-03:00","2025-10-28T11:30:00-03:00","2025-10-28T12:00:00-03:00","2025-10-30T11:15:00+00:00","2025-10-30T11:30:00+00:00","2025-10-30T11:45:00+00:00"],"y":{"dtype":"f8","bdata":"7FG4HsUTsEBmZmZmZhCwQKRwPQoXD7BAPQrXo7AXsEAAAAAAQBawQAAAAABAFrBAH4XrUbgWsEBmZmZmpg2wQGZmZmamDbBA16NwPcoHsEAzMzMz8wewQEjhehRuGLBASOF6FG4YsEAfhetROCGwQMP1KFyPK7BAH4XrUTgvsECkcD0K1z2wQFK4HoUrNbBAH4XrUXg+sECuR+F61BawQK5H4XqUZK5AexSuR2FdrkDNzMzMzFCuQA=="},"type":"scatter","xaxis":"x","yaxis":"y"},{"hovertemplate":"Long Entry\u003cbr\u003e%{x}\u003cbr\u003e%{y:.2f}\u003cextra\u003e\u003c\u002fextra\u003e","marker":{"color":"#16a34a","size":9,"symbol":"triangle-up"},"mode":"markers","name":"Long Entry","x":["2025-09-08T07:15:00.000000000","2025-09-08T23:15:00.000000000","2025-09-09T10:15:00.000000000","2025-09-10T03:15:00.000000000","2025-09-10T14:30:00.000000000","2025-09-11T10:15:00.000000000","2025-09-13T11:15:00.000000000","2025-09-14T05:00:00.000000000","2025-09-14T21:15:00.000000000","2025-09-16T03:45:00.000000000","2025-09-17T02:00:00.000000000","2025-09-17T15:00:00.000000000","2025-09-18T03:30:00.000000000","2025-09-18T20:30:00.000000000","2025-09-19T01:15:00.000000000","2025-09-19T12:30:00.000000000","2025-09-20T06:00:00.000000000","2025-09-21T01:30:00.000000000","2025-09-21T06:30:00.000000000","2025-09-21T19:30:00.000000000","2025-09-22T17:00:00.000000000","2025-09-22T23:00:00.000000000","2025-09-24T11:00:00.000000000","2025-09-26T03:00:00.000000000","2025-09-27T05:15:00.000000000","2025-09-27T14:30:00.000000000","2025-09-27T23:00:00.000000000","2025-09-29T03:15:00.000000000","2025-09-29T22:45:00.000000000","2025-10-03T11:15:00.000000000","2025-10-03T21:30:00.000000000","2025-10-04T12:30:00.000000000","2025-10-04T22:00:00.000000000","2025-10-05T07:15:00.000000000","2025-10-07T05:15:00.000000000","2025-10-07T12:45:00.000000000","2025-10-08T10:45:00.000000000","2025-10-08T22:45:00.000000000","2025-10-10T00:15:00.000000000","2025-10-10T13:15:00.000000000","2025-10-13T08:45:00.000000000","2025-10-13T22:15:00.000000000","2025-10-14T22:30:00.000000000","2025-10-15T12:15:00.000000000","2025-10-16T11:30:00.000000000","2025-10-17T03:00:00.000000000","2025-10-18T10:45:00.000000000","2025-10-18T22:15:00.000000000","2025-10-19T06:00:00.000000000","2025-10-19T21:45:00.000000000","2025-10-20T08:15:00.000000000","2025-10-22T06:45:00.000000000","2025-10-22T11:45:00.000000000","2025-10-23T09:15:00.000000000","2025-10-24T10:45:00.000000000","2025-10-24T21:30:00.000000000","2025-10-25T12:15:00.000000000","2025-10-25T23:15:00.000000000","2025-10-27T05:30:00.000000000","2025-10-27T18:30:00.000000000","2025-10-28T17:45:00.000000000","2025-10-29T06:30:00.000000000","2025-10-29T11:30:00.000000000"],"y":{"dtype":"f8","bdata":"XI\u002fC9ejqsEBcj8L1KLuwQPYoXI8C9LBA9ihcjwLUsEBcj8L16AKxQJqZmZmZNbFAZmZmZiZbskB7FK5H4SyyQB+F61E4BbJAuB6F65GasUB7FK5HYYSxQK5H4XoUZ7FAzczMzEzWsUBI4XoU7uexQOxRuB5FwrFA9ihcjwJ5sUDsUbgexXSxQFyPwvUodbFAAAAAAMBmsUDXo3A9SnCxQGZmZmamNbBAH4XrUbhPsED2KFyPAkawQB+F61E4sa5AmpmZmZk5r0CF61G4njSvQNejcD0KNK9ASOF6FO4EsEApXI\u002fCtWiwQGZmZmZmcLFAXI\u002fC9WiRsUCF61G4HmixQFyPwvUof7FAAAAAAAC4sUAfhetROCqyQM3MzMxMnrFA4XoUrgd6sUAAAAAAQH2xQBSuR+G6F7FArkfhelQSsEAfhetRuNyvQHE9CtejfrBAXI\u002fC9aj+r0A9CtejcE+vQJqZmZmZqq9A9ihcj0JsrkAUrkfh+i+uQD0K16PwO65ACtejcD0nrkAAAAAAgMiuQOxRuB4FfK9A9ihcj0L3rUAzMzMzsxiuQD0K16NwHq5A7FG4HgXSrkAAAAAAgKOuQDMzMzOztq5ACtejcL29rkDNzMzMzFKwQAAAAAAAGbBA7FG4HgUSr0D2KFyPQj6vQBSuR+H6K69A"},"type":"scatter","xaxis":"x","yaxis":"y"},{"hovertemplate":"Long Exit\u003cbr\u003e%{x}\u003cbr\u003e%{y:.2f}\u003cextra\u003e\u003c\u002fextra\u003e","marker":{"color":"#16a34a","size":9,"symbol":"x"},"mode":"markers","name":"Long Exit","x":["2025-09-08T07:15:00.000000000","2025-09-09T04:15:00.000000000","2025-09-09T18:15:00.000000000","2025-09-10T04:30:00.000000000","2025-09-10T22:30:00.000000000","2025-09-11T20:30:00.000000000","2025-09-13T21:15:00.000000000","2025-09-14T18:45:00.000000000","2025-09-15T18:45:00.000000000","2025-09-16T19:15:00.000000000","2025-09-17T14:45:00.000000000","2025-09-17T20:15:00.000000000","2025-09-18T11:30:00.000000000","2025-09-18T21:45:00.000000000","2025-09-19T11:15:00.000000000","2025-09-20T05:00:00.000000000","2025-09-20T12:45:00.000000000","2025-09-21T03:45:00.000000000","2025-09-21T11:15:00.000000000","2025-09-22T11:30:00.000000000","2025-09-22T18:45:00.000000000","2025-09-24T08:15:00.000000000","2025-09-25T22:15:00.000000000","2025-09-26T11:00:00.000000000","2025-09-27T10:00:00.000000000","2025-09-27T18:45:00.000000000","2025-09-28T11:30:00.000000000","2025-09-29T06:30:00.000000000","2025-09-30T18:00:00.000000000","2025-10-03T13:45:00.000000000","2025-10-04T11:15:00.000000000","2025-10-04T17:45:00.000000000","2025-10-05T00:45:00.000000000","2025-10-05T22:30:00.000000000","2025-10-07T10:30:00.000000000","2025-10-08T05:45:00.000000000","2025-10-08T14:30:00.000000000","2025-10-09T19:45:00.000000000","2025-10-10T10:45:00.000000000","2025-10-12T00:45:00.000000000","2025-10-13T15:00:00.000000000","2025-10-14T13:45:00.000000000","2025-10-15T06:00:00.000000000","2025-10-15T22:15:00.000000000","2025-10-16T22:15:00.000000000","2025-10-17T13:15:00.000000000","2025-10-18T15:00:00.000000000","2025-10-19T01:00:00.000000000","2025-10-19T07:30:00.000000000","2025-10-20T02:00:00.000000000","2025-10-21T09:45:00.000000000","2025-10-22T11:00:00.000000000","2025-10-23T01:45:00.000000000","2025-10-23T14:00:00.000000000","2025-10-24T16:30:00.000000000","2025-10-25T04:30:00.000000000","2025-10-25T16:00:00.000000000","2025-10-26T05:15:00.000000000","2025-10-27T14:15:00.000000000","2025-10-28T11:15:00.000000000","2025-10-29T02:45:00.000000000","2025-10-29T10:15:00.000000000","2025-10-30T08:45:00.000000000"],"y":{"dtype":"f8","bdata":"XI\u002fC9ejqsECPwvUo3BKxQJqZmZmZybBAj8L1KFzjsECuR+F6VAyxQAAAAAAAarFAcT0K1+NAskD2KFyPghSyQM3MzMwMqrFAmpmZmZmZsUAAAAAAAEqxQHE9Ctcj6rFAAAAAAAD2sUAUrkfhev+xQM3MzMwMs7FAXI\u002fC9ah6sUCF61G4XpCxQGZmZmbmgrFAAAAAAIB5sUD2KFyPwmSwQD0K16PwY7BAexSuR+FYsECuR+F6lK+uQBSuR+F60a5AcT0K16Ncr0BxPQrXo1qvQBSuR+H6YK9APQrXo7AcsEDNzMzMzFSwQAAAAABAq7FAj8L1KNyTsUAAAAAAAHmxQI\u002fC9SgcsrFAuB6F65GosUApXI\u002fCtU2yQHsUrkchebFAcT0K1yOusUCkcD0K1xexQM3MzMzMAbFAFK5H4fqHrUCF61G43mywQClcj8J1\u002fK9ApHA9ChdQsEAUrkfhejCvQLgehevRsa5AKVyPwnXHrUBmZmZm5lmuQClcj8L1aq5AexSuR+GlrkCPwvUoXKivQOF6FK7HTa5ACtejcD0ArkDsUbgeBfStQBSuR+H6Wa5A7FG4HgWorkC4HoXr0bCuQArXo3A9365AFK5H4frhrkBmZmZm5mmwQKRwPQqXPbBA7FG4HgVyr0DhehSux2qvQOF6FK7HVq5A"},"type":"scatter","xaxis":"x","yaxis":"y"},{"hovertemplate":"Short Entry\u003cbr\u003e%{x}\u003cbr\u003e%{y:.2f}\u003cextra\u003e\u003c\u002fextra\u003e","marker":{"color":"#dc2626","size":9,"symbol":"triangle-down"},"mode":"markers","name":"Short Entry","x":["2025-09-08T07:15:00.000000000","2025-09-09T04:15:00.000000000","2025-09-09T18:15:00.000000000","2025-09-10T04:30:00.000000000","2025-09-10T22:30:00.000000000","2025-09-11T20:30:00.000000000","2025-09-13T21:15:00.000000000","2025-09-14T18:45:00.000000000","2025-09-15T18:45:00.000000000","2025-09-16T19:15:00.000000000","2025-09-17T14:45:00.000000000","2025-09-17T20:15:00.000000000","2025-09-18T11:30:00.000000000","2025-09-18T21:45:00.000000000","2025-09-19T11:15:00.000000000","2025-09-20T05:00:00.000000000","2025-09-20T12:45:00.000000000","2025-09-21T03:45:00.000000000","2025-09-21T11:15:00.000000000","2025-09-22T11:30:00.000000000","2025-09-22T18:45:00.000000000","2025-09-24T08:15:00.000000000","2025-09-25T22:15:00.000000000","2025-09-26T11:00:00.000000000","2025-09-27T10:00:00.000000000","2025-09-27T18:45:00.000000000","2025-09-28T11:30:00.000000000","2025-09-29T06:30:00.000000000","2025-09-30T18:00:00.000000000","2025-10-03T13:45:00.000000000","2025-10-04T11:15:00.000000000","2025-10-04T17:45:00.000000000","2025-10-05T00:45:00.000000000","2025-10-05T22:30:00.000000000","2025-10-07T10:30:00.000000000","2025-10-08T05:45:00.000000000","2025-10-08T14:30:00.000000000","2025-10-09T19:45:00.000000000","2025-10-10T10:45:00.000000000","2025-10-12T00:45:00.000000000","2025-10-13T15:00:00.000000000","2025-10-14T13:45:00.000000000","2025-10-15T06:00:00.000000000","2025-10-15T22:15:00.000000000","2025-10-16T22:15:00.000000000","2025-10-17T13:15:00.000000000","2025-10-18T15:00:00.000000000","2025-10-19T01:00:00.000000000","2025-10-19T07:30:00.000000000","2025-10-20T02:00:00.000000000","2025-10-21T09:45:00.000000000","2025-10-22T11:00:00.000000000","2025-10-23T01:45:00.000000000","2025-10-23T14:00:00.000000000","2025-10-24T16:30:00.000000000","2025-10-25T04:30:00.000000000","2025-10-25T16:00:00.000000000","2025-10-26T05:15:00.000000000","2025-10-27T14:15:00.000000000","2025-10-28T11:15:00.000000000","2025-10-29T02:45:00.000000000","2025-10-29T10:15:00.000000000"],"y":{"dtype":"f8","bdata":"XI\u002fC9ejqsECPwvUo3BKxQJqZmZmZybBAj8L1KFzjsECuR+F6VAyxQAAAAAAAarFAcT0K1+NAskD2KFyPghSyQM3MzMwMqrFAmpmZmZmZsUAAAAAAAEqxQHE9Ctcj6rFAAAAAAAD2sUAUrkfhev+xQM3MzMwMs7FAXI\u002fC9ah6sUCF61G4XpCxQGZmZmbmgrFAAAAAAIB5sUD2KFyPwmSwQD0K16PwY7BAexSuR+FYsECuR+F6lK+uQBSuR+F60a5AcT0K16Ncr0BxPQrXo1qvQBSuR+H6YK9APQrXo7AcsEDNzMzMzFSwQAAAAABAq7FAj8L1KNyTsUAAAAAAAHmxQI\u002fC9SgcsrFAuB6F65GosUApXI\u002fCtU2yQHsUrkchebFAcT0K1yOusUCkcD0K1xexQM3MzMzMAbFAFK5H4fqHrUCF61G43mywQClcj8J1\u002fK9ApHA9ChdQsEAUrkfhejCvQLgehevRsa5AKVyPwnXHrUBmZmZm5lmuQClcj8L1aq5AexSuR+GlrkCPwvUoXKivQOF6FK7HTa5ACtejcD0ArkDsUbgeBfStQBSuR+H6Wa5A7FG4HgWorkC4HoXr0bCuQArXo3A9365AFK5H4frhrkBmZmZm5mmwQKRwPQqXPbBA7FG4HgVyr0DhehSux2qvQA=="},"type":"scatter","xaxis":"x","yaxis":"y"},{"hovertemplate":"Short Exit\u003cbr\u003e%{x}\u003cbr\u003e%{y:.2f}\u003cextra\u003e\u003c\u002fextra\u003e","marker":{"color":"#dc2626","size":9,"symbol":"x"},"mode":"markers","name":"Short Exit","x":["2025-09-08T23:15:00.000000000","2025-09-09T10:15:00.000000000","2025-09-10T03:15:00.000000000","2025-09-10T14:30:00.000000000","2025-09-11T10:15:00.000000000","2025-09-13T11:15:00.000000000","2025-09-14T05:00:00.000000000","2025-09-14T21:15:00.000000000","2025-09-16T03:45:00.000000000","2025-09-17T02:00:00.000000000","2025-09-17T15:00:00.000000000","2025-09-18T03:30:00.000000000","2025-09-18T20:30:00.000000000","2025-09-19T01:15:00.000000000","2025-09-19T12:30:00.000000000","2025-09-20T06:00:00.000000000","2025-09-21T01:30:00.000000000","2025-09-21T06:30:00.000000000","2025-09-21T19:30:00.000000000","2025-09-22T17:00:00.000000000","2025-09-22T23:00:00.000000000","2025-09-24T11:00:00.000000000","2025-09-26T03:00:00.000000000","2025-09-27T05:15:00.000000000","2025-09-27T14:30:00.000000000","2025-09-27T23:00:00.000000000","2025-09-29T03:15:00.000000000","2025-09-29T22:45:00.000000000","2025-10-03T11:15:00.000000000","2025-10-03T21:30:00.000000000","2025-10-04T12:30:00.000000000","2025-10-04T22:00:00.000000000","2025-10-05T07:15:00.000000000","2025-10-07T05:15:00.000000000","2025-10-07T12:45:00.000000000","2025-10-08T10:45:00.000000000","2025-10-08T22:45:00.000000000","2025-10-10T00:15:00.000000000","2025-10-10T13:15:00.000000000","2025-10-13T08:45:00.000000000","2025-10-13T22:15:00.000000000","2025-10-14T22:30:00.000000000","2025-10-15T12:15:00.000000000","2025-10-16T11:30:00.000000000","2025-10-17T03:00:00.000000000","2025-10-18T10:45:00.000000000","2025-10-18T22:15:00.000000000","2025-10-19T06:00:00.000000000","2025-10-19T21:45:00.000000000","2025-10-20T08:15:00.000000000","2025-10-22T06:45:00.000000000","2025-10-22T11:45:00.000000000","2025-10-23T09:15:00.000000000","2025-10-24T10:45:00.000000000","2025-10-24T21:30:00.000000000","2025-10-25T12:15:00.000000000","2025-10-25T23:15:00.000000000","2025-10-27T05:30:00.000000000","2025-10-27T18:30:00.000000000","2025-10-28T17:45:00.000000000","2025-10-29T06:30:00.000000000","2025-10-29T11:30:00.000000000"],"y":{"dtype":"f8","bdata":"XI\u002fC9Si7sED2KFyPAvSwQPYoXI8C1LBAXI\u002fC9egCsUCamZmZmTWxQGZmZmYmW7JAexSuR+EsskAfhetROAWyQLgeheuRmrFAexSuR2GEsUCuR+F6FGexQM3MzMxM1rFASOF6FO7nsUDsUbgeRcKxQPYoXI8CebFA7FG4HsV0sUBcj8L1KHWxQAAAAADAZrFA16NwPUpwsUBmZmZmpjWwQB+F61G4T7BA9ihcjwJGsEAfhetROLGuQJqZmZmZOa9AhetRuJ40r0DXo3A9CjSvQEjhehTuBLBAKVyPwrVosEBmZmZmZnCxQFyPwvVokbFAhetRuB5osUBcj8L1KH+xQAAAAAAAuLFAH4XrUTgqskDNzMzMTJ6xQOF6FK4HerFAAAAAAEB9sUAUrkfhuhexQK5H4XpUErBAH4XrUbjcr0BxPQrXo36wQFyPwvWo\u002fq9APQrXo3BPr0CamZmZmaqvQPYoXI9CbK5AFK5H4fovrkA9Ctej8DuuQArXo3A9J65AAAAAAIDIrkDsUbgeBXyvQPYoXI9C961AMzMzM7MYrkA9CtejcB6uQOxRuB4F0q5AAAAAAICjrkAzMzMzs7auQArXo3C9va5AzczMzMxSsEAAAAAAABmwQOxRuB4FEq9A9ihcj0I+r0AUrkfh+iuvQA=="},"type":"scatter","xaxis":"x","yaxis":"y"},{"hovertemplate":"%{x}\u003cbr\u003e%{y:.2f}%\u003cextra\u003e\u003c\u002fextra\u003e","line":{"color":"#2563eb","width":2},"marker":{"size":6},"mode":"lines+markers","name":"PnL acumulado %","x":["2025-09-08T07:15:00.000000000","2025-09-08T23:15:00.000000000","2025-09-09T04:15:00.000000000","2025-09-09T10:15:00.000000000","2025-09-09T18:15:00.000000000","2025-09-10T03:15:00.000000000","2025-09-10T04:30:00.000000000","2025-09-10T14:30:00.000000000","2025-09-10T22:30:00.000000000","2025-09-11T10:15:00.000000000","2025-09-11T20:30:00.000000000","2025-09-13T11:15:00.000000000","2025-09-13T21:15:00.000000000","2025-09-14T05:00:00.000000000","2025-09-14T18:45:00.000000000","2025-09-14T21:15:00.000000000","2025-09-15T18:45:00.000000000","2025-09-16T03:45:00.000000000","2025-09-16T19:15:00.000000000","2025-09-17T02:00:00.000000000","2025-09-17T14:45:00.000000000","2025-09-17T15:00:00.000000000","2025-09-17T20:15:00.000000000","2025-09-18T03:30:00.000000000","2025-09-18T11:30:00.000000000","2025-09-18T20:30:00.000000000","2025-09-18T21:45:00.000000000","2025-09-19T01:15:00.000000000","2025-09-19T11:15:00.000000000","2025-09-19T12:30:00.000000000","2025-09-20T05:00:00.000000000","2025-09-20T06:00:00.000000000","2025-09-20T12:45:00.000000000","2025-09-21T01:30:00.000000000","2025-09-21T03:45:00.000000000","2025-09-21T06:30:00.000000000","2025-09-21T11:15:00.000000000","2025-09-21T19:30:00.000000000","2025-09-22T11:30:00.000000000","2025-09-22T17:00:00.000000000","2025-09-22T18:45:00.000000000","2025-09-22T23:00:00.000000000","2025-09-24T08:15:00.000000000","2025-09-24T11:00:00.000000000","2025-09-25T22:15:00.000000000","2025-09-26T03:00:00.000000000","2025-09-26T11:00:00.000000000","2025-09-27T05:15:00.000000000","2025-09-27T10:00:00.000000000","2025-09-27T14:30:00.000000000","2025-09-27T18:45:00.000000000","2025-09-27T23:00:00.000000000","2025-09-28T11:30:00.000000000","2025-09-29T03:15:00.000000000","2025-09-29T06:30:00.000000000","2025-09-29T22:45:00.000000000","2025-09-30T18:00:00.000000000","2025-10-03T11:15:00.000000000","2025-10-03T13:45:00.000000000","2025-10-03T21:30:00.000000000","2025-10-04T11:15:00.000000000","2025-10-04T12:30:00.000000000","2025-10-04T17:45:00.000000000","2025-10-04T22:00:00.000000000","2025-10-05T00:45:00.000000000","2025-10-05T07:15:00.000000000","2025-10-05T22:30:00.000000000","2025-10-07T05:15:00.000000000","2025-10-07T10:30:00.000000000","2025-10-07T12:45:00.000000000","2025-10-08T05:45:00.000000000","2025-10-08T10:45:00.000000000","2025-10-08T14:30:00.000000000","2025-10-08T22:45:00.000000000","2025-10-09T19:45:00.000000000","2025-10-10T00:15:00.000000000","2025-10-10T10:45:00.000000000","2025-10-10T13:15:00.000000000","2025-10-12T00:45:00.000000000","2025-10-13T08:45:00.000000000","2025-10-13T15:00:00.000000000","2025-10-13T22:15:00.000000000","2025-10-14T13:45:00.000000000","2025-10-14T22:30:00.000000000","2025-10-15T06:00:00.000000000","2025-10-15T12:15:00.000000000","2025-10-15T22:15:00.000000000","2025-10-16T11:30:00.000000000","2025-10-16T22:15:00.000000000","2025-10-17T03:00:00.000000000","2025-10-17T13:15:00.000000000","2025-10-18T10:45:00.000000000","2025-10-18T15:00:00.000000000","2025-10-18T22:15:00.000000000","2025-10-19T01:00:00.000000000","2025-10-19T06:00:00.000000000","2025-10-19T07:30:00.000000000","2025-10-19T21:45:00.000000000","2025-10-20T02:00:00.000000000","2025-10-20T08:15:00.000000000","2025-10-21T09:45:00.000000000","2025-10-22T06:45:00.000000000","2025-10-22T11:00:00.000000000","2025-10-22T11:45:00.000000000","2025-10-23T01:45:00.000000000","2025-10-23T09:15:00.000000000","2025-10-23T14:00:00.000000000","2025-10-24T10:45:00.000000000","2025-10-24T16:30:00.000000000","2025-10-24T21:30:00.000000000","2025-10-25T04:30:00.000000000","2025-10-25T12:15:00.000000000","2025-10-25T16:00:00.000000000","2025-10-25T23:15:00.000000000","2025-10-26T05:15:00.000000000","2025-10-27T05:30:00.000000000","2025-10-27T14:15:00.000000000","2025-10-27T18:30:00.000000000","2025-10-28T11:15:00.000000000","2025-10-28T17:45:00.000000000","2025-10-29T02:45:00.000000000","2025-10-29T06:30:00.000000000","2025-10-29T10:15:00.000000000","2025-10-29T11:30:00.000000000","2025-10-30T08:45:00.000000000"],"y":{"dtype":"f8","bdata":"AAAAAAAAAAAzzfqdAKTxP832PyFkMwlAMtFJPeTYDkB17B\u002f8nAcHQNyPuaKHFwVAstcQRULxB0Ba94+ztxoCQD3MKiq31QNAmyoYWSuK+D+5cm1d98gFQCJpJMVvfQXA+0ifu+j1CcCPOO\u002fs7IgGwGJCjdyWuQrAGc0ghgsVCMDokgTjOvITwICT7BCxkxLAD93bfLupEsD7f2erdccQwDWPHGqO\u002fBXAk8jsAlqdGMCxXCU24LEJwIUaPSDlOwbA+8h\u002f1iOuAMCbLeSu5Hb8v2LnNGaRPvS\u002fjSI\u002fr\u002fUusD8t1R1sS2HRv\u002fyaK1lnJvA\u002fTpKxIH+98D97kQNOp9jyP8rJlWhsuvw\u002foFH6nZE0A0AA+c7jNKoFQJKNrjQ7sApA1VOYhTsODkAqFgZy37MPQDb3UI4bPQDA2ZKZsaQI7b8tTAK1pabKPzuLtTxXFeY\u002fWv7Bj10a7T\u002fsSlIfG8T1P4c7qhtkbhHAwm9b28SDEcBb+Pe0rL4PwNHRbTS+JhXAUlk5NN9lE8AetjV3cWcRwMVI9RwwAA\u002fAMVtxvk4nC8AQZb7+HqcGwOZiloNZvBPAs\u002fP6URBrEcDN\u002fqAwWMoYwFw+2+yvrxrAvkyyjfDoKsDMXJafBEYowPoGKwmHISfAX9iyyKIFJ8CxtxPW9BMlwMD7gB8CUiTAbj0luoSYJMDr9xqhH1IiwC8iC3ixlCLAuxPr6NtCI8CY68mORv8owEQS8sGFeCfAbKuH9LD3H8BoADe1yqEhwKkNEuUXrCHAnsRj+YKvHsBZ9U7tal0awCxbmWJktiHAUHVd5Rq1IcBVaBy2tLUiwJii82FO1g7AWQayEjX2J8Cmr6rd0N8zwM3AyFy1xTDAHBvMN+UxMcAb9\u002fxxYzw0wJi2xTREQzTA65L3EG9KMsDWDd0Nm4QswDv2LjVeSi3AeA6bQ7osMMA5pVLoWj4zwO6RbUq8WzLAjEed0W55NMBaQt+0atg1wDgz3RCNTTXAx0nzANfqNMBp\u002fpn\u002fUU80wBO8YQawcDPAW5w1PLPMMcCRZGwKqT0ywF4Sbh7kzC7A9wRt78S0LcAPABC6WZoywAZAHY7XfDHA8mUr5N9eMcCtUbrFZ7AxwNrHDrJHKjLA\u002fvNEpua3MsDV0OvDN\u002fIxwELH26m3fTPACniiqP0FNMDoQjorP\u002fczwJM7aLTFyzPAA5PWYe7eM8DlRZgW8FozwOaqIuZs7jLAdZK4sol4MsBHAW2M6C44wCaJleJkoTfAEeR9JYO0NcDlSI9NNtE0wGh86HFOeTDA8+6xQqmILsDnSsKddD8twEG2FC53IizAL68f8q6SKsCWFMcoluovwA=="},"type":"scatter","xaxis":"x2","yaxis":"y2"},{"hovertemplate":"%{x:.2f}%\u003cextra\u003e\u003c\u002fextra\u003e","marker":{"color":"#737373"},"name":"Distribuci\u00f3n PnL %","nbinsx":20,"x":{"dtype":"f8","bdata":"AAAAAAAAAAAzzfqdAKTxPzOQQtJjYQBAlmkncACW5j\u002fzkqcEHUXvv47JZZZVAc+\u002fsz66EtXN1j9hgQNGKlrnvzJOrWn3r8s\u002fvdt69oVC7r\u002fVusJhwwfzP+3tSJEzoxXAYn\u002fr2ePh4b9gg4B13mfbP0sneL6nwuC\u002fTapjs1ok1T9usdB\u002f1J7\u002fv3z2fyGd6NU\u002fu45J72sKlr9D0UUXXSTeP+Y81Ppi1PS\u002f68qBxlwG5b91NLTP04gHQGARQq\u002fYr9s\u002fJUb1JgU35j9ukW34i5XTP3KMXpGmcOA\u002fi9kowYBB9T\u002fQne3XCG3Vv0cQMzS6fvQ\u002fQeq+8Pjioj9s+Y9qQdnAP51wJDWKw+M\u002f67K9pm1d4z8AO6UuGq3TP05SfkMZGOQ\u002fGDJOhwLw2j9WJdzGPlrKP7CGK4B9+BfAACXVw+T18T\u002fyEm0PJ9nxP2Dw6Z5b194\u002feswxTBkUzD\u002f8LsVdsdvcP0LOfuNq3xbALjs0sb9glb9MOfcN6EbaP4xWx2efHfW\u002f6odHA\u002fAN3D9CMzrQ2+bfP8UbsYuWdd4\u002fnGwf9ArH3j+I2Mv+vgDiP71gbgiU0QDAlXnbjEmK4j9nLJh6H339v\u002fX4o8N7Vd6\u002fIVuJLjEiG8CPf99wXxf1PxxdtWbZR+I\u002f65oueEDkqz\u002fVCvIp3xrvPyJ+V9JWPtg\u002faWsQqaagwb8aLFLIKDPyPw2RCrx1pMC\u002fiTH+G07F1b9xX3uXqvEGwDqVfc0MbOg\u002fOvK4HrXyDUAhqzKvI1\u002fqv7qAGrZfmpS\u002fzVoBQ7Oi8j8TPVMwYEjxP\u002fyBx6+7HgLAm7ddvtOXZD9CMO8LnQngv13\u002fPjtCABZAsx01eqFAIMDjsUZR2ZIfwL92Dwfc0AhAuJPWwPYL27\u002f834bR8VMIwOzw\u002fSILg5u\u002f1DriPFKN\u002fz\u002f\u002fLyQohiAQQLcMPepkuNi\u002fnTU5kLJ4+L8GtrwlBY0IwGpporzTU+w\u002f8ax9OZTtAMDlrB80vu\u002f1vz7kQYC0W+E\u002fOlx6+oOt2D+6aykroHDjP8JKCCc\u002f1Os\u002fe\u002fvBosw\u002f+j9fDbKNcz3cvxDbqtm3uQZAZ9YQ8PKB4T+b7MsSuv8NwIsALL8i2PE\u002f1xPa8an3vT\u002fT7rpj+GHUv1WLHRX7d96\u002fe4TFht6z4b8lZSRL3LXoP9pm\u002f17+t\u002fi\u002f2BjW2L8I4b9iQmrQ+nytP46qA2m7vMU\u002fwG9Xbq0os7+5o8lnyX\u002fgP76\u002fZh3MINs\u002fWRyG2sx43T9Ku9Fme9kWwCQE7zp1sOE\u002fS1F60RvO\u002fj+UZdP9mmnsP\u002fIxm26fXxFA7074CJ1P8z\u002fOQPpOSpPkP2VK2frWz+E\u002fIXFQv4P86D+flZ3anF8FwA=="},"type":"histogram","xaxis":"x3","yaxis":"y3"}],                        {"template":{"data":{"barpolar":[{"marker":{"line":{"color":"white","width":0.5},"pattern":{"fillmode":"overlay","size":10,"solidity":0.2}},"type":"barpolar"}],"bar":[{"error_x":{"color":"#2a3f5f"},"error_y":{"color":"#2a3f5f"},"marker":{"line":{"color":"white","width":0.5},"pattern":{"fillmode":"overlay","size":10,"solidity":0.2}},"type":"bar"}],"carpet":[{"aaxis":{"endlinecolor":"#2a3f5f","gridcolor":"#C8D4E3","linecolor":"#C8D4E3","minorgridcolor":"#C8D4E3","startlinecolor":"#2a3f5f"},"baxis":{"endlinecolor":"#2a3f5f","gridcolor":"#C8D4E3","linecolor":"#C8D4E3","minorgridcolor":"#C8D4E3","startlinecolor":"#2a3f5f"},"type":"carpet"}],"choropleth":[{"colorbar":{"outlinewidth":0,"ticks":""},"type":"choropleth"}],"contourcarpet":[{"colorbar":{"outlinewidth":0,"ticks":""},"type":"contourcarpet"}],"contour":[{"colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]],"type":"contour"}],"heatmap":[{"colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]],"type":"heatmap"}],"histogram2dcontour":[{"colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]],"type":"histogram2dcontour"}],"histogram2d":[{"colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]],"type":"histogram2d"}],"histogram":[{"marker":{"pattern":{"fillmode":"overlay","size":10,"solidity":0.2}},"type":"histogram"}],"mesh3d":[{"colorbar":{"outlinewidth":0,"ticks":""},"type":"mesh3d"}],"parcoords":[{"line":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"parcoords"}],"pie":[{"automargin":true,"type":"pie"}],"scatter3d":[{"line":{"colorbar":{"outlinewidth":0,"ticks":""}},"marker":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"scatter3d"}],"scattercarpet":[{"marker":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"scattercarpet"}],"scattergeo":[{"marker":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"scattergeo"}],"scattergl":[{"marker":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"scattergl"}],"scattermapbox":[{"marker":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"scattermapbox"}],"scattermap":[{"marker":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"scattermap"}],"scatterpolargl":[{"marker":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"scatterpolargl"}],"scatterpolar":[{"marker":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"scatterpolar"}],"scatter":[{"fillpattern":{"fillmode":"overlay","size":10,"solidity":0.2},"type":"scatter"}],"scatterternary":[{"marker":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"scatterternary"}],"surface":[{"colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]],"type":"surface"}],"table":[{"cells":{"fill":{"color":"#EBF0F8"},"line":{"color":"white"}},"header":{"fill":{"color":"#C8D4E3"},"line":{"color":"white"}},"type":"table"}]},"layout":{"annotationdefaults":{"arrowcolor":"#2a3f5f","arrowhead":0,"arrowwidth":1},"autotypenumbers":"strict","coloraxis":{"colorbar":{"outlinewidth":0,"ticks":""}},"colorscale":{"diverging":[[0,"#8e0152"],[0.1,"#c51b7d"],[0.2,"#de77ae"],[0.3,"#f1b6da"],[0.4,"#fde0ef"],[0.5,"#f7f7f7"],[0.6,"#e6f5d0"],[0.7,"#b8e186"],[0.8,"#7fbc41"],[0.9,"#4d9221"],[1,"#276419"]],"sequential":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]],"sequentialminus":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]]},"colorway":["#636efa","#EF553B","#00cc96","#ab63fa","#FFA15A","#19d3f3","#FF6692","#B6E880","#FF97FF","#FECB52"],"font":{"color":"#2a3f5f"},"geo":{"bgcolor":"white","lakecolor":"white","landcolor":"white","showlakes":true,"showland":true,"subunitcolor":"#C8D4E3"},"hoverlabel":{"align":"left"},"hovermode":"closest","mapbox":{"style":"light"},"paper_bgcolor":"white","plot_bgcolor":"white","polar":{"angularaxis":{"gridcolor":"#EBF0F8","linecolor":"#EBF0F8","ticks":""},"bgcolor":"white","radialaxis":{"gridcolor":"#EBF0F8","linecolor":"#EBF0F8","ticks":""}},"scene":{"xaxis":{"backgroundcolor":"white","gridcolor":"#DFE8F3","gridwidth":2,"linecolor":"#EBF0F8","showbackground":true,"ticks":"","zerolinecolor":"#EBF0F8"},"yaxis":{"backgroundcolor":"white","gridcolor":"#DFE8F3","gridwidth":2,"linecolor":"#EBF0F8","showbackground":true,"ticks":"","zerolinecolor":"#EBF0F8"},"zaxis":{"backgroundcolor":"white","gridcolor":"#DFE8F3","gridwidth":2,"linecolor":"#EBF0F8","showbackground":true,"ticks":"","zerolinecolor":"#EBF0F8"}},"shapedefaults":{"line":{"color":"#2a3f5f"}},"ternary":{"aaxis":{"gridcolor":"#DFE8F3","linecolor":"#A2B1C6","ticks":""},"baxis":{"gridcolor":"#DFE8F3","linecolor":"#A2B1C6","ticks":""},"bgcolor":"white","caxis":{"gridcolor":"#DFE8F3","linecolor":"#A2B1C6","ticks":""}},"title":{"x":0.05},"xaxis":{"automargin":true,"gridcolor":"#EBF0F8","linecolor":"#EBF0F8","ticks":"","title":{"standoff":15},"zerolinecolor":"#EBF0F8","zerolinewidth":2},"yaxis":{"automargin":true,"gridcolor":"#EBF0F8","linecolor":"#EBF0F8","ticks":"","title":{"standoff":15},"zerolinecolor":"#EBF0F8","zerolinewidth":2}}},"xaxis":{"anchor":"y","domain":[0.0,1.0]},"yaxis":{"anchor":"x","domain":[0.5800000000000001,1.0]},"xaxis2":{"anchor":"y2","domain":[0.0,1.0]},"yaxis2":{"anchor":"x2","domain":[0.248,0.5],"title":{"text":"PnL %"}},"xaxis3":{"anchor":"y3","domain":[0.0,1.0],"title":{"text":"PnL (%)"}},"yaxis3":{"anchor":"x3","domain":[0.0,0.168],"title":{"text":"Frecuencia"}},"legend":{"orientation":"h","yanchor":"bottom","y":1.02,"xanchor":"right","x":1},"height":780,"title":{"text":"Dashboard Estrategia Bollinger"},"hovermode":"x unified"},                        {"displaylogo": false, "responsive": true}                    )                };            </script>        </div>
+    </div>
+    
+    <section class="trades">
+        <h2>Últimos trades (hasta 50)</h2>
+        <table border="1" class="dataframe trades-table">
+  <thead>
+    <tr style="text-align: right;">
+      <th>EntryTime</th>
+      <th>ExitTime</th>
+      <th>Direction</th>
+      <th>EntryPrice</th>
+      <th>ExitPrice</th>
+      <th>EntryReason</th>
+      <th>ExitReason</th>
+      <th>PnLAbs</th>
+      <th>PnLPct</th>
+      <th>Outcome</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>2025-10-09 19:45:00</td>
+      <td>2025-10-10 00:15:00</td>
+      <td>short</td>
+      <td>4375.84</td>
+      <td>4375.73</td>
+      <td>bollinger_signal</td>
+      <td>bollinger_signal</td>
+      <td>0.11</td>
+      <td>0.000025</td>
+      <td>win</td>
+    </tr>
+    <tr>
+      <td>2025-10-10 00:15:00</td>
+      <td>2025-10-10 10:45:00</td>
+      <td>long</td>
+      <td>4375.73</td>
+      <td>4353.80</td>
+      <td>bollinger_signal</td>
+      <td>bollinger_signal</td>
+      <td>-21.93</td>
+      <td>-0.005012</td>
+      <td>loss</td>
+    </tr>
+    <tr>
+      <td>2025-10-10 10:45:00</td>
+      <td>2025-10-10 13:15:00</td>
+      <td>short</td>
+      <td>4353.80</td>
+      <td>4114.33</td>
+      <td>bollinger_signal</td>
+      <td>bollinger_signal</td>
+      <td>239.47</td>
+      <td>0.055003</td>
+      <td>win</td>
+    </tr>
+    <tr>
+      <td>2025-10-10 13:15:00</td>
+      <td>2025-10-12 00:45:00</td>
+      <td>long</td>
+      <td>4114.33</td>
+      <td>3779.99</td>
+      <td>bollinger_signal</td>
+      <td>bollinger_signal</td>
+      <td>-334.34</td>
+      <td>-0.081262</td>
+      <td>loss</td>
+    </tr>
+    <tr>
+      <td>2025-10-12 00:45:00</td>
+      <td>2025-10-13 08:45:00</td>
+      <td>short</td>
+      <td>3779.99</td>
+      <td>4078.36</td>
+      <td>bollinger_signal</td>
+      <td>bollinger_signal</td>
+      <td>-298.37</td>
+      <td>-0.078934</td>
+      <td>loss</td>
+    </tr>
+    <tr>
+      <td>2025-10-13 08:45:00</td>
+      <td>2025-10-13 15:00:00</td>
+      <td>long</td>
+      <td>4078.36</td>
+      <td>4204.87</td>
+      <td>bollinger_signal</td>
+      <td>bollinger_signal</td>
+      <td>126.51</td>
+      <td>0.031020</td>
+      <td>win</td>
+    </tr>
+    <tr>
+      <td>2025-10-13 15:00:00</td>
+      <td>2025-10-13 22:15:00</td>
+      <td>short</td>
+      <td>4204.87</td>
+      <td>4222.64</td>
+      <td>bollinger_signal</td>
+      <td>bollinger_signal</td>
+      <td>-17.77</td>
+      <td>-0.004226</td>
+      <td>loss</td>
+    </tr>
+    <tr>
+      <td>2025-10-13 22:15:00</td>
+      <td>2025-10-14 13:45:00</td>
+      <td>long</td>
+      <td>4222.64</td>
+      <td>4094.23</td>
+      <td>bollinger_signal</td>
+      <td>bollinger_signal</td>
+      <td>-128.41</td>
+      <td>-0.030410</td>
+      <td>loss</td>
+    </tr>
+    <tr>
+      <td>2025-10-14 13:45:00</td>
+      <td>2025-10-14 22:30:00</td>
+      <td>short</td>
+      <td>4094.23</td>
+      <td>4095.33</td>
+      <td>bollinger_signal</td>
+      <td>bollinger_signal</td>
+      <td>-1.10</td>
+      <td>-0.000269</td>
+      <td>loss</td>
+    </tr>
+    <tr>
+      <td>2025-10-14 22:30:00</td>
+      <td>2025-10-15 06:00:00</td>
+      <td>long</td>
+      <td>4095.33</td>
+      <td>4176.09</td>
+      <td>bollinger_signal</td>
+      <td>bollinger_signal</td>
+      <td>80.76</td>
+      <td>0.019720</td>
+      <td>win</td>
+    </tr>
+    <tr>
+      <td>2025-10-15 06:00:00</td>
+      <td>2025-10-15 12:15:00</td>
+      <td>short</td>
+      <td>4176.09</td>
+      <td>4007.72</td>
+      <td>bollinger_signal</td>
+      <td>bollinger_signal</td>
+      <td>168.37</td>
+      <td>0.040318</td>
+      <td>win</td>
+    </tr>
+    <tr>
+      <td>2025-10-15 12:15:00</td>
+      <td>2025-10-15 22:15:00</td>
+      <td>long</td>
+      <td>4007.72</td>
+      <td>3992.24</td>
+      <td>bollinger_signal</td>
+      <td>bollinger_signal</td>
+      <td>-15.48</td>
+      <td>-0.003863</td>
+      <td>loss</td>
+    </tr>
+    <tr>
+      <td>2025-10-15 22:15:00</td>
+      <td>2025-10-16 11:30:00</td>
+      <td>short</td>
+      <td>3992.24</td>
+      <td>4053.30</td>
+      <td>bollinger_signal</td>
+      <td>bollinger_signal</td>
+      <td>-61.06</td>
+      <td>-0.015295</td>
+      <td>loss</td>
+    </tr>
+    <tr>
+      <td>2025-10-16 11:30:00</td>
+      <td>2025-10-16 22:15:00</td>
+      <td>long</td>
+      <td>4053.30</td>
+      <td>3928.91</td>
+      <td>bollinger_signal</td>
+      <td>bollinger_signal</td>
+      <td>-124.39</td>
+      <td>-0.030689</td>
+      <td>loss</td>
+    </tr>
+    <tr>
+      <td>2025-10-16 22:15:00</td>
+      <td>2025-10-17 03:00:00</td>
+      <td>short</td>
+      <td>3928.91</td>
+      <td>3894.13</td>
+      <td>bollinger_signal</td>
+      <td>bollinger_signal</td>
+      <td>34.78</td>
+      <td>0.008852</td>
+      <td>win</td>
+    </tr>
+    <tr>
+      <td>2025-10-17 03:00:00</td>
+      <td>2025-10-17 13:15:00</td>
+      <td>long</td>
+      <td>3894.13</td>
+      <td>3811.73</td>
+      <td>bollinger_signal</td>
+      <td>bollinger_signal</td>
+      <td>-82.40</td>
+      <td>-0.021160</td>
+      <td>loss</td>
+    </tr>
+    <tr>
+      <td>2025-10-17 13:15:00</td>
+      <td>2025-10-18 10:45:00</td>
+      <td>short</td>
+      <td>3811.73</td>
+      <td>3863.99</td>
+      <td>bollinger_signal</td>
+      <td>bollinger_signal</td>
+      <td>-52.26</td>
+      <td>-0.013710</td>
+      <td>loss</td>
+    </tr>
+    <tr>
+      <td>2025-10-18 10:45:00</td>
+      <td>2025-10-18 15:00:00</td>
+      <td>long</td>
+      <td>3863.99</td>
+      <td>3884.95</td>
+      <td>bollinger_signal</td>
+      <td>bollinger_signal</td>
+      <td>20.96</td>
+      <td>0.005424</td>
+      <td>win</td>
+    </tr>
+    <tr>
+      <td>2025-10-18 15:00:00</td>
+      <td>2025-10-18 22:15:00</td>
+      <td>short</td>
+      <td>3884.95</td>
+      <td>3869.97</td>
+      <td>bollinger_signal</td>
+      <td>bollinger_signal</td>
+      <td>14.98</td>
+      <td>0.003856</td>
+      <td>win</td>
+    </tr>
+    <tr>
+      <td>2025-10-18 22:15:00</td>
+      <td>2025-10-19 01:00:00</td>
+      <td>long</td>
+      <td>3869.97</td>
+      <td>3893.48</td>
+      <td>bollinger_signal</td>
+      <td>bollinger_signal</td>
+      <td>23.51</td>
+      <td>0.006075</td>
+      <td>win</td>
+    </tr>
+    <tr>
+      <td>2025-10-19 01:00:00</td>
+      <td>2025-10-19 06:00:00</td>
+      <td>short</td>
+      <td>3893.48</td>
+      <td>3859.62</td>
+      <td>bollinger_signal</td>
+      <td>bollinger_signal</td>
+      <td>33.86</td>
+      <td>0.008697</td>
+      <td>win</td>
+    </tr>
+    <tr>
+      <td>2025-10-19 06:00:00</td>
+      <td>2025-10-19 07:30:00</td>
+      <td>long</td>
+      <td>3859.62</td>
+      <td>3922.94</td>
+      <td>bollinger_signal</td>
+      <td>bollinger_signal</td>
+      <td>63.32</td>
+      <td>0.016406</td>
+      <td>win</td>
+    </tr>
+    <tr>
+      <td>2025-10-19 07:30:00</td>
+      <td>2025-10-19 21:45:00</td>
+      <td>short</td>
+      <td>3922.94</td>
+      <td>3940.25</td>
+      <td>bollinger_signal</td>
+      <td>bollinger_signal</td>
+      <td>-17.31</td>
+      <td>-0.004413</td>
+      <td>loss</td>
+    </tr>
+    <tr>
+      <td>2025-10-19 21:45:00</td>
+      <td>2025-10-20 02:00:00</td>
+      <td>long</td>
+      <td>3940.25</td>
+      <td>4052.18</td>
+      <td>bollinger_signal</td>
+      <td>bollinger_signal</td>
+      <td>111.93</td>
+      <td>0.028407</td>
+      <td>win</td>
+    </tr>
+    <tr>
+      <td>2025-10-20 02:00:00</td>
+      <td>2025-10-20 08:15:00</td>
+      <td>short</td>
+      <td>4052.18</td>
+      <td>4030.01</td>
+      <td>bollinger_signal</td>
+      <td>bollinger_signal</td>
+      <td>22.17</td>
+      <td>0.005471</td>
+      <td>win</td>
+    </tr>
+    <tr>
+      <td>2025-10-20 08:15:00</td>
+      <td>2025-10-21 09:45:00</td>
+      <td>long</td>
+      <td>4030.01</td>
+      <td>3878.89</td>
+      <td>bollinger_signal</td>
+      <td>bollinger_signal</td>
+      <td>-151.12</td>
+      <td>-0.037499</td>
+      <td>loss</td>
+    </tr>
+    <tr>
+      <td>2025-10-21 09:45:00</td>
+      <td>2025-10-22 06:45:00</td>
+      <td>short</td>
+      <td>3878.89</td>
+      <td>3835.63</td>
+      <td>bollinger_signal</td>
+      <td>bollinger_signal</td>
+      <td>43.26</td>
+      <td>0.011153</td>
+      <td>win</td>
+    </tr>
+    <tr>
+      <td>2025-10-22 06:45:00</td>
+      <td>2025-10-22 11:00:00</td>
+      <td>long</td>
+      <td>3835.63</td>
+      <td>3840.12</td>
+      <td>bollinger_signal</td>
+      <td>bollinger_signal</td>
+      <td>4.49</td>
+      <td>0.001171</td>
+      <td>win</td>
+    </tr>
+    <tr>
+      <td>2025-10-22 11:00:00</td>
+      <td>2025-10-22 11:45:00</td>
+      <td>short</td>
+      <td>3840.12</td>
+      <td>3852.35</td>
+      <td>bollinger_signal</td>
+      <td>bollinger_signal</td>
+      <td>-12.23</td>
+      <td>-0.003185</td>
+      <td>loss</td>
+    </tr>
+    <tr>
+      <td>2025-10-22 11:45:00</td>
+      <td>2025-10-23 01:45:00</td>
+      <td>long</td>
+      <td>3852.35</td>
+      <td>3834.01</td>
+      <td>bollinger_signal</td>
+      <td>bollinger_signal</td>
+      <td>-18.34</td>
+      <td>-0.004761</td>
+      <td>loss</td>
+    </tr>
+    <tr>
+      <td>2025-10-23 01:45:00</td>
+      <td>2025-10-23 09:15:00</td>
+      <td>short</td>
+      <td>3834.01</td>
+      <td>3855.22</td>
+      <td>bollinger_signal</td>
+      <td>bollinger_signal</td>
+      <td>-21.21</td>
+      <td>-0.005532</td>
+      <td>loss</td>
+    </tr>
+    <tr>
+      <td>2025-10-23 09:15:00</td>
+      <td>2025-10-23 14:00:00</td>
+      <td>long</td>
+      <td>3855.22</td>
+      <td>3884.99</td>
+      <td>bollinger_signal</td>
+      <td>bollinger_signal</td>
+      <td>29.77</td>
+      <td>0.007722</td>
+      <td>win</td>
+    </tr>
+    <tr>
+      <td>2025-10-23 14:00:00</td>
+      <td>2025-10-24 10:45:00</td>
+      <td>short</td>
+      <td>3884.99</td>
+      <td>3945.01</td>
+      <td>bollinger_signal</td>
+      <td>bollinger_signal</td>
+      <td>-60.02</td>
+      <td>-0.015449</td>
+      <td>loss</td>
+    </tr>
+    <tr>
+      <td>2025-10-24 10:45:00</td>
+      <td>2025-10-24 16:30:00</td>
+      <td>long</td>
+      <td>3945.01</td>
+      <td>3924.01</td>
+      <td>bollinger_signal</td>
+      <td>bollinger_signal</td>
+      <td>-21.00</td>
+      <td>-0.005323</td>
+      <td>loss</td>
+    </tr>
+    <tr>
+      <td>2025-10-24 16:30:00</td>
+      <td>2025-10-24 21:30:00</td>
+      <td>short</td>
+      <td>3924.01</td>
+      <td>3921.75</td>
+      <td>bollinger_signal</td>
+      <td>bollinger_signal</td>
+      <td>2.26</td>
+      <td>0.000576</td>
+      <td>win</td>
+    </tr>
+    <tr>
+      <td>2025-10-24 21:30:00</td>
+      <td>2025-10-25 04:30:00</td>
+      <td>long</td>
+      <td>3921.75</td>
+      <td>3928.41</td>
+      <td>bollinger_signal</td>
+      <td>bollinger_signal</td>
+      <td>6.66</td>
+      <td>0.001698</td>
+      <td>win</td>
+    </tr>
+    <tr>
+      <td>2025-10-25 04:30:00</td>
+      <td>2025-10-25 12:15:00</td>
+      <td>short</td>
+      <td>3928.41</td>
+      <td>3931.35</td>
+      <td>bollinger_signal</td>
+      <td>bollinger_signal</td>
+      <td>-2.94</td>
+      <td>-0.000748</td>
+      <td>loss</td>
+    </tr>
+    <tr>
+      <td>2025-10-25 12:15:00</td>
+      <td>2025-10-25 16:00:00</td>
+      <td>long</td>
+      <td>3931.35</td>
+      <td>3951.62</td>
+      <td>bollinger_signal</td>
+      <td>bollinger_signal</td>
+      <td>20.27</td>
+      <td>0.005156</td>
+      <td>win</td>
+    </tr>
+    <tr>
+      <td>2025-10-25 16:00:00</td>
+      <td>2025-10-25 23:15:00</td>
+      <td>short</td>
+      <td>3951.62</td>
+      <td>3934.87</td>
+      <td>bollinger_signal</td>
+      <td>bollinger_signal</td>
+      <td>16.75</td>
+      <td>0.004239</td>
+      <td>win</td>
+    </tr>
+    <tr>
+      <td>2025-10-25 23:15:00</td>
+      <td>2025-10-26 05:15:00</td>
+      <td>long</td>
+      <td>3934.87</td>
+      <td>3952.99</td>
+      <td>bollinger_signal</td>
+      <td>bollinger_signal</td>
+      <td>18.12</td>
+      <td>0.004605</td>
+      <td>win</td>
+    </tr>
+    <tr>
+      <td>2025-10-26 05:15:00</td>
+      <td>2025-10-27 05:30:00</td>
+      <td>short</td>
+      <td>3952.99</td>
+      <td>4178.80</td>
+      <td>bollinger_signal</td>
+      <td>bollinger_signal</td>
+      <td>-225.81</td>
+      <td>-0.057124</td>
+      <td>loss</td>
+    </tr>
+    <tr>
+      <td>2025-10-27 05:30:00</td>
+      <td>2025-10-27 14:15:00</td>
+      <td>long</td>
+      <td>4178.80</td>
+      <td>4201.90</td>
+      <td>bollinger_signal</td>
+      <td>bollinger_signal</td>
+      <td>23.10</td>
+      <td>0.005528</td>
+      <td>win</td>
+    </tr>
+    <tr>
+      <td>2025-10-27 14:15:00</td>
+      <td>2025-10-27 18:30:00</td>
+      <td>short</td>
+      <td>4201.90</td>
+      <td>4121.00</td>
+      <td>bollinger_signal</td>
+      <td>bollinger_signal</td>
+      <td>80.90</td>
+      <td>0.019253</td>
+      <td>win</td>
+    </tr>
+    <tr>
+      <td>2025-10-27 18:30:00</td>
+      <td>2025-10-28 11:15:00</td>
+      <td>long</td>
+      <td>4121.00</td>
+      <td>4157.59</td>
+      <td>bollinger_signal</td>
+      <td>bollinger_signal</td>
+      <td>36.59</td>
+      <td>0.008879</td>
+      <td>win</td>
+    </tr>
+    <tr>
+      <td>2025-10-28 11:15:00</td>
+      <td>2025-10-28 17:45:00</td>
+      <td>short</td>
+      <td>4157.59</td>
+      <td>3977.01</td>
+      <td>bollinger_signal</td>
+      <td>bollinger_signal</td>
+      <td>180.58</td>
+      <td>0.043434</td>
+      <td>win</td>
+    </tr>
+    <tr>
+      <td>2025-10-28 17:45:00</td>
+      <td>2025-10-29 02:45:00</td>
+      <td>long</td>
+      <td>3977.01</td>
+      <td>4025.01</td>
+      <td>bollinger_signal</td>
+      <td>bollinger_signal</td>
+      <td>48.00</td>
+      <td>0.012069</td>
+      <td>win</td>
+    </tr>
+    <tr>
+      <td>2025-10-29 02:45:00</td>
+      <td>2025-10-29 06:30:00</td>
+      <td>short</td>
+      <td>4025.01</td>
+      <td>3999.13</td>
+      <td>bollinger_signal</td>
+      <td>bollinger_signal</td>
+      <td>25.88</td>
+      <td>0.006430</td>
+      <td>win</td>
+    </tr>
+    <tr>
+      <td>2025-10-29 06:30:00</td>
+      <td>2025-10-29 10:15:00</td>
+      <td>long</td>
+      <td>3999.13</td>
+      <td>4021.39</td>
+      <td>bollinger_signal</td>
+      <td>bollinger_signal</td>
+      <td>22.26</td>
+      <td>0.005566</td>
+      <td>win</td>
+    </tr>
+    <tr>
+      <td>2025-10-29 10:15:00</td>
+      <td>2025-10-29 11:30:00</td>
+      <td>short</td>
+      <td>4021.39</td>
+      <td>3989.99</td>
+      <td>bollinger_signal</td>
+      <td>bollinger_signal</td>
+      <td>31.40</td>
+      <td>0.007808</td>
+      <td>win</td>
+    </tr>
+    <tr>
+      <td>2025-10-29 11:30:00</td>
+      <td>2025-10-30 08:45:00</td>
+      <td>long</td>
+      <td>3989.99</td>
+      <td>3883.39</td>
+      <td>bollinger_signal</td>
+      <td>end_of_data</td>
+      <td>-106.60</td>
+      <td>-0.026717</td>
+      <td>loss</td>
+    </tr>
+  </tbody>
+</table>
+    </section>
+    
+</body>
+</html>

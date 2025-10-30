@@ -5,11 +5,13 @@ pandas==2.2.3
 # Plot
 matplotlib
 mplfinance==0.12.10b0
+plotly>=5.24.0
 
 # HTTP utilidades
 requests==2.32.3
 python-dateutil
 tzdata
+python-dotenv
 
 # Binance USDⓈ-M Futures (UMFutures)
 binance-futures-connector

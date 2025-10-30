@@ -1,0 +1,44 @@
+15 15 
+[BACKTEST] Resumen:
+  Total trades: 669
+  Wins: 454
+  Losses: 214
+  Win rate %: 67.86
+  Total PnL %: 135.55
+  Avg PnL %: 0.20
+  Max Drawdown %: 0.20
+ 
+ 30 30 
+[BACKTEST] Guardado CSV de trades en backtest/backtestHistorico/trades.csv
+[BACKTEST] Resumen:
+  Total trades: 353
+  Wins: 258
+  Losses: 94
+  Win rate %: 73.09
+  Total PnL %: 177.27
+  Avg PnL %: 0.50
+  Max Drawdown %: -7.69
+
+1h 1h
+[BACKTEST] Guardado CSV de trades en backtest/backtestHistorico/trades.csv
+[BACKTEST] Resumen:
+  Total trades: 185
+  Wins: 139
+  Losses: 45
+  Win rate %: 75.14
+  Total PnL %: 265.52
+  Avg PnL %: 1.44
+  Max Drawdown %: -1.17
+  
+  2h 2h
+[BACKTEST] Guardado CSV de trades en backtest/backtestHistorico/trades.csv
+[BACKTEST] Resumen:
+  Total trades: 85
+  Wins: 63
+  Losses: 21
+  Win rate %: 74.12
+  Total PnL %: 153.99
+  Avg PnL %: 1.81
+  Max Drawdown %: 4.07
+
+

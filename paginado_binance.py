@@ -75,6 +75,8 @@ def fetch_klines_paginado(
     curr_start = start_ms
 
     while fetched < total_bars:
+        if curr_start is not None and end_ms is not None and curr_start >= end_ms:
+            break
         batch_limit = min(page_limit, total_bars - fetched)
         data = client.klines(
             symbol=symbol,
@@ -93,6 +95,8 @@ def fetch_klines_paginado(
         next_start = last_close + 1
         # Si no avanzamos, evitamos loop infinito
         if next_start <= curr_start:
+            break
+        if end_ms is not None and next_start >= end_ms:
             break
         curr_start = next_start
 
