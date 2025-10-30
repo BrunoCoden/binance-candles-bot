@@ -18,6 +18,7 @@ TRADE_COLUMNS = [
     "ExitReason",
     "PnLAbs",
     "PnLPct",
+    "Fees",
     "Outcome",
 ]
 
@@ -37,6 +38,7 @@ def log_trade(
     exit_time: pd.Timestamp,
     entry_reason: str,
     exit_reason: str,
+    fees: float = 0.0,
     csv_path: str | bool | None = None,
 ):
     if entry_price is None or exit_price is None:
@@ -48,6 +50,9 @@ def log_trade(
 
     pnl_abs = exit_price - entry_price if direction == "long" else entry_price - exit_price
     pnl_pct = pnl_abs / entry_price if entry_price else np.nan
+    pnl_abs -= fees
+    if entry_price:
+        pnl_pct = pnl_abs / entry_price
     outcome = "win" if pnl_abs > 0 else ("loss" if pnl_abs < 0 else "flat")
 
     data = {
@@ -60,6 +65,7 @@ def log_trade(
         "ExitReason": exit_reason,
         "PnLAbs": pnl_abs,
         "PnLPct": pnl_pct,
+        "Fees": fees,
         "Outcome": outcome,
     }
 
@@ -67,5 +73,5 @@ def log_trade(
         pd.DataFrame([data]).to_csv(path, mode="a", header=False, index=False, encoding="utf-8")
     print(
         f"[TRADE] {direction.upper()} {entry_reason} → {exit_reason} | "
-        f"Entry {entry_price:.2f} Exit {exit_price:.2f} | PnL {pnl_abs:.2f} ({pnl_pct*100:.2f}%)"
+        f"Entry {entry_price:.2f} Exit {exit_price:.2f} | Fees {fees:.2f} | PnL {pnl_abs:.2f} ({pnl_pct*100:.2f}%)"
     )

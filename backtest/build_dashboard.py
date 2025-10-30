@@ -9,6 +9,14 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
+try:
+    from velas import SYMBOL_DISPLAY, STREAM_INTERVAL
+except ImportError:
+    CURRENT_DIR = Path(__file__).resolve().parent
+    PARENT_DIR = CURRENT_DIR.parent
+    if str(PARENT_DIR) not in sys.path:
+        sys.path.append(str(PARENT_DIR))
+    from velas import SYMBOL_DISPLAY, STREAM_INTERVAL
 
 try:
     from .config import OUTPUT_PRESETS, resolve_profile
@@ -21,6 +29,15 @@ except ImportError:  # ejecución directa
     from config import OUTPUT_PRESETS, resolve_profile
 
 DEFAULT_PRICE_PATH = Path(os.getenv("ALERTS_TABLE_CSV_PATH", "alerts_stream.csv"))
+
+LOGO_SVG = """
+<svg width=\"72\" height=\"72\" viewBox=\"0 0 120 120\" xmlns=\"http://www.w3.org/2000/svg\">
+  <rect x=\"0\" y=\"0\" width=\"120\" height=\"120\" rx=\"18\" fill=\"#111827\" stroke=\"#2563eb\" stroke-width=\"6\"/>
+  <path d=\"M15 60 C30 40, 55 20, 80 45 S115 100, 105 105\" stroke=\"#22d3ee\" stroke-width=\"6\" fill=\"none\"/>
+  <path d=\"M15 80 C40 65, 65 50, 90 70\" stroke=\"#a855f7\" stroke-width=\"6\" fill=\"none\" opacity=\"0.8\"/>
+  <circle cx=\"78\" cy=\"46\" r=\"8\" fill=\"#facc15\" stroke=\"#facc15\"/>
+</svg>
+"""
 
 
 def load_trades(path: Path) -> pd.DataFrame:
@@ -56,6 +73,7 @@ def summarize_trades(df: pd.DataFrame) -> dict:
     winrate = wins / total * 100 if total else 0
     cum = df["PnLPct"].fillna(0).cumsum()
     max_drawdown = cum.min() * 100
+    total_fees = df.get("Fees", pd.Series(dtype=float)).sum()
     return {
         "Total trades": total,
         "Wins": wins,
@@ -64,6 +82,7 @@ def summarize_trades(df: pd.DataFrame) -> dict:
         "Total PnL %": f"{pnl_pct_sum:.2f}",
         "Avg PnL %": f"{pnl_pct_avg:.2f}",
         "Max Drawdown %": f"{max_drawdown:.2f}",
+        "Total Fees": f"{total_fees:.2f}",
     }
 
 
@@ -219,7 +238,52 @@ def build_trades_table(trades: pd.DataFrame, limit: int = 50) -> str:
     """
 
 
-def render_dashboard(trades_path: Path, price_path: Path | None, html_out: Path, show: bool):
+def build_operations_table(trades: pd.DataFrame, limit: int = 15) -> str:
+    columns = [
+        ("EntryTime", "Entrada"),
+        ("Direction", "Dirección"),
+        ("EntryPrice", "Precio Entrada"),
+        ("ExitTime", "Salida"),
+        ("ExitPrice", "Precio Salida"),
+        ("Outcome", "Resultado"),
+        ("PnLAbs", "PnL"),
+        ("PnLPct", "PnL %"),
+        ("Fees", "Fees"),
+    ]
+    subset = trades.tail(limit).copy()
+    subset["EntryTimeFmt"] = subset["EntryTime"].dt.strftime("%d-%m %H:%M")
+    subset["ExitTimeFmt"] = subset["ExitTime"].dt.strftime("%d-%m %H:%M")
+    rows_html = []
+    for _, row in subset.iterrows():
+        pnl_pct = row.get("PnLPct", 0) * 100 if pd.notna(row.get("PnLPct")) else 0
+        cells = [
+            f"<td>{row['EntryTimeFmt']}</td>",
+            f"<td class='dir {row['Direction']}'>{row['Direction'].upper()}</td>",
+            f"<td>{row['EntryPrice']:.2f}</td>",
+            f"<td>{row['ExitTimeFmt']}</td>",
+            f"<td>{row['ExitPrice']:.2f}</td>",
+            f"<td class='result {row['Outcome']}'>{row['Outcome'].upper()}</td>",
+            f"<td>{row['PnLAbs']:.2f}</td>",
+            f"<td>{pnl_pct:.2f}%</td>",
+            f"<td>{row.get('Fees', 0.0):.2f}</td>",
+        ]
+        rows_html.append("".join(cells))
+
+    header_cells = "".join(f"<th>{label}</th>" for _, label in columns)
+    body_rows = "".join(f"<tr>{row}</tr>" for row in rows_html)
+
+    return f"""
+    <section class="ops">
+        <h2>Detalle Operativo Reciente</h2>
+        <table class="ops-table">
+            <thead><tr>{header_cells}</tr></thead>
+            <tbody>{body_rows}</tbody>
+        </table>
+    </section>
+    """
+
+
+def render_dashboard(trades_path: Path, price_path: Path | None, html_out: Path, show: bool, profile: str):
     trades_df = load_trades(trades_path)
     price_df = load_price(price_path)
     summary = summarize_trades(trades_df)
@@ -232,6 +296,7 @@ def render_dashboard(trades_path: Path, price_path: Path | None, html_out: Path,
     fig_html = fig.to_html(full_html=False, include_plotlyjs="cdn", config={"displaylogo": False})
 
     summary_html = build_summary_html(summary)
+    ops_table_html = build_operations_table(trades_df)
     trades_table_html = build_trades_table(trades_df)
 
     html_out.parent.mkdir(parents=True, exist_ok=True)
@@ -243,62 +308,107 @@ def render_dashboard(trades_path: Path, price_path: Path | None, html_out: Path,
     <title>Dashboard Estrategia Bollinger</title>
     <style>
         body {{
-            font-family: Arial, sans-serif;
-            background-color: #111827;
-            color: #f9fafb;
+            font-family: 'Inter', Arial, sans-serif;
+            background-color: #0f172a;
+            color: #f8fafc;
             margin: 0;
-            padding: 0 24px 48px;
+            padding: 32px 24px 56px;
         }}
-        h1 {{
-            margin-top: 32px;
-            text-align: center;
+        .hero {{
+            display: flex;
+            align-items: center;
+            gap: 24px;
+            margin-bottom: 24px;
+        }}
+        .hero .logo {{
+            flex-shrink: 0;
+        }}
+        .hero h1 {{
+            margin: 0;
+            font-size: 1.9rem;
+        }}
+        .hero p {{
+            margin: 6px 0 0;
+            color: #94a3b8;
         }}
         h2 {{
             margin-top: 32px;
             border-left: 4px solid #2563eb;
             padding-left: 12px;
+            font-size: 1.3rem;
         }}
         table {{
             width: 100%;
             border-collapse: collapse;
             margin-top: 16px;
-            background: #1f2937;
+            background: #1e293b;
+            border-radius: 10px;
+            overflow: hidden;
         }}
         th, td {{
-            padding: 8px 12px;
-            border-bottom: 1px solid #374151;
+            padding: 10px 14px;
+            border-bottom: 1px solid #334155;
             text-align: left;
+            font-size: 0.95rem;
         }}
         th {{
             color: #60a5fa;
-            width: 30%;
+            background: rgba(37, 99, 235, 0.12);
         }}
-        .trades-table th {{
-            background: #111827;
-        }}
-        .trades-table tbody tr:nth-child(even) {{
-            background: #111827;
+        .trades-table tbody tr:nth-child(even),
+        .ops-table tbody tr:nth-child(even) {{
+            background: rgba(15, 23, 42, 0.6);
         }}
         .plot-container {{
             margin-top: 32px;
         }}
-        a.download {{
-            display: inline-block;
-            margin-top: 24px;
-            padding: 10px 16px;
-            background: #2563eb;
-            color: white;
-            text-decoration: none;
-            border-radius: 6px;
+        .dir.long {{
+            color: #22c55e;
+            font-weight: 600;
+        }}
+        .dir.short {{
+            color: #f87171;
+            font-weight: 600;
+        }}
+        .result.win {{
+            color: #4ade80;
+            font-weight: 600;
+        }}
+        .result.loss {{
+            color: #f87171;
+            font-weight: 600;
+        }}
+        .result.flat {{
+            color: #fbbf24;
+            font-weight: 600;
+        }}
+        @media (max-width: 768px) {{
+            .hero {{
+                flex-direction: column;
+                align-items: flex-start;
+            }}
+            .hero .logo {{
+                margin-bottom: 8px;
+            }}
+            th, td {{
+                font-size: 0.85rem;
+            }}
         }}
     </style>
 </head>
 <body>
-    <h1>Dashboard Estrategia Bollinger</h1>
+    <section class="hero">
+        <div class="logo">{LOGO_SVG}</div>
+        <div>
+            <h1>Dashboard Estrategia Bollinger</h1>
+            <p>{SYMBOL_DISPLAY} · Intervalo {STREAM_INTERVAL} · Perfil {profile.upper()}</p>
+        </div>
+    </section>
     {summary_html}
     <div class="plot-container">
         {fig_html}
     </div>
+    {ops_table_html}
     {trades_table_html}
 </body>
 </html>"""
@@ -326,7 +436,7 @@ def main():
     price_path = Path(args.price) if args.price else None
     html_path = Path(args.html) if args.html else preset_paths["dashboard"]
 
-    render_dashboard(trades_path, price_path, html_path, args.show)
+    render_dashboard(trades_path, price_path, html_path, args.show, profile)
 
 
 if __name__ == "__main__":

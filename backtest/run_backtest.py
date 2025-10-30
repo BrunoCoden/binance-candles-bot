@@ -10,6 +10,8 @@ from zoneinfo import ZoneInfo
 import numpy as np
 import pandas as pd
 
+from binance.um_futures import UMFutures
+
 try:
     import matplotlib.pyplot as plt
 except ImportError:
@@ -35,6 +37,29 @@ BACKTEST_CHANNEL_BARS = int(os.getenv("BACKTEST_CHANNEL_BARS", "5000"))  # legac
 SHOW_PLOT = os.getenv("BACKTEST_PLOT_SHOW", "false").lower() == "true"
 
 COLUMN_ORDER = TRADE_COLUMNS
+
+
+def _get_um_client() -> UMFutures:
+    base_url = os.getenv("BINANCE_UM_BASE_URL", "https://fapi.binance.com")
+    return UMFutures(base_url=base_url)
+
+
+def _fetch_fee_rate(symbol: str) -> float:
+    """
+    Devuelve la comisión taker para el símbolo dado.
+    Si no se puede obtener, retorna un valor por defecto de 0.0005 (0.05%).
+    """
+    try:
+        client = _get_um_client()
+        info = client.exchange_info()
+        for entry in info.get("symbols", []):
+            if entry.get("symbol") == symbol:
+                taker = entry.get("takerCommissionRate")
+                if taker is not None:
+                    return float(taker)
+    except Exception as exc:
+        print(f"[BACKTEST][WARN] No se pudo obtener la tasa de comisión desde Binance ({exc}); se usará 0.0005.")
+    return 0.0005
 
 
 def _resolve_time_window(
@@ -200,6 +225,9 @@ def run_backtest(
 ):
     ohlc, bb = _prepare_data(stream_bars, start_ms=start_ms, end_ms=end_ms)
 
+    fee_rate = _fetch_fee_rate(API_SYMBOL)
+    print(f"[BACKTEST] Fee taker estimada: {fee_rate:.6f}")
+
     if start_local is not None or end_local is not None:
         idx = ohlc.index
         mask = pd.Series(True, index=idx)
@@ -241,7 +269,7 @@ def run_backtest(
                 except Exception:
                     exit_price = signal_price
                 position["exit_meta"] = {"basis": basis_now}
-                trades.append(_finalize_trade(position, exit_price, ts, signal["type"]))
+                trades.append(_finalize_trade(position, exit_price, ts, signal["type"], fee_rate))
                 position = None
 
             entry_price = reference if reference is not None else signal_price
@@ -261,7 +289,7 @@ def run_backtest(
     if position:
         fallback_exit = position["entry_price"]
         position["exit_meta"] = {"basis": position.get("entry_meta", {}).get("basis")}
-        trades.append(_finalize_trade(position, float(fallback_exit), ohlc.index[-1], "end_of_data"))
+        trades.append(_finalize_trade(position, float(fallback_exit), ohlc.index[-1], "end_of_data", fee_rate))
 
     trades_path = Path(trades_path)
     plot_path = Path(plot_path)
@@ -289,13 +317,15 @@ def run_backtest(
         print("[BACKTEST][WARN] Matplotlib no disponible; se omitió la generación del gráfico.")
 
 
-def _finalize_trade(position, exit_price, exit_time, exit_reason):
+def _finalize_trade(position, exit_price, exit_time, exit_reason, fee_rate: float):
     entry_price = position["entry_price"]
     entry_time = position["entry_time"]
     direction = position["direction"]
     entry_reason = position["entry_reason"]
     entry_meta = position.get("entry_meta") or {}
     exit_meta = position.get("exit_meta") or {}
+
+    fees = (abs(entry_price) + abs(exit_price)) * fee_rate
 
     log_trade(
         direction=direction,
@@ -305,10 +335,12 @@ def _finalize_trade(position, exit_price, exit_time, exit_reason):
         exit_time=exit_time,
         entry_reason=entry_reason,
         exit_reason=exit_reason,
+        fees=fees,
         csv_path=False,  # evita escritura duplicada; se registrará manualmente más adelante
     )
 
-    pnl_abs = exit_price - entry_price if direction == "long" else entry_price - exit_price
+    pnl_abs_raw = exit_price - entry_price if direction == "long" else entry_price - exit_price
+    pnl_abs = pnl_abs_raw - fees
     pnl_pct = pnl_abs / entry_price if entry_price else np.nan
     outcome = "win" if pnl_abs > 0 else ("loss" if pnl_abs < 0 else "flat")
 
@@ -322,6 +354,7 @@ def _finalize_trade(position, exit_price, exit_time, exit_reason):
         exit_reason,
         pnl_abs,
         pnl_pct,
+        fees,
         outcome,
     ]
 
@@ -336,6 +369,7 @@ def _summarize_trades(df: pd.DataFrame) -> dict:
     pnl_avg = df["PnLPct"].mean() * 100
     winrate = wins / total * 100 if total else 0
     max_drawdown = df["PnLPct"].cumsum().min() * 100
+    total_fees = df.get("Fees", pd.Series(dtype=float)).sum()
     return {
         "Total trades": total,
         "Wins": wins,
@@ -344,6 +378,7 @@ def _summarize_trades(df: pd.DataFrame) -> dict:
         "Total PnL %": f"{pnl_total_pct:.2f}",
         "Avg PnL %": f"{pnl_avg:.2f}",
         "Max Drawdown %": f"{max_drawdown:.2f}",
+        "Total Fees": f"{total_fees:.2f}",
     }
 
 
