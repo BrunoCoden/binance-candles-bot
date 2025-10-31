@@ -7,6 +7,7 @@ import pandas as pd
 import requests
 from zoneinfo import ZoneInfo
 from typing import Any
+from datetime import datetime, timezone
 
 
 DEFAULT_TRADES_PATH = os.getenv("STRAT_TRADES_CSV_PATH", "estrategia_trades.csv").strip()
@@ -40,12 +41,18 @@ TRADE_COLUMNS = [
 
 def format_timestamp(ts: Any) -> str:
     try:
-        if not isinstance(ts, pd.Timestamp):
-            ts = pd.Timestamp(ts)
-        if ts.tzinfo is None:
-            ts = ts.tz_localize("UTC")
-        ts_local = ts.tz_convert(LOCAL_TZ)
-        return ts_local.strftime("%Y-%m-%d %H:%M:%S %Z")
+        if isinstance(ts, pd.Timestamp):
+            dt = ts.to_pydatetime()
+        elif isinstance(ts, datetime):
+            dt = ts
+        elif hasattr(ts, "to_pydatetime"):
+            dt = ts.to_pydatetime()
+        else:
+            dt = pd.Timestamp(ts).to_pydatetime()
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        dt_local = dt.astimezone(LOCAL_TZ)
+        return dt_local.strftime("%Y-%m-%d %H:%M:%S %Z")
     except Exception:
         return str(ts)
 
