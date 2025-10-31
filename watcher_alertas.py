@@ -1,7 +1,7 @@
 # watcher_alertas.py
 import os
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from alerts import generate_alerts, send_alerts, format_alert_message
 from trade_logger import send_trade_notification, format_timestamp
@@ -17,14 +17,29 @@ def _notify_startup():
         return
     try:
         now_utc = datetime.now(timezone.utc)
-        timestamp = format_timestamp(now_utc)
-        message = (
+        entry_time = now_utc - timedelta(minutes=45)
+        ts_entry = format_timestamp(entry_time)
+        ts_exit = format_timestamp(now_utc)
+
+        opening_msg = (
             f"{SYMBOL_DISPLAY} {STREAM_INTERVAL}\n"
-            f"[PRUEBA] Watcher iniciado\n"
-            f"Hora: {timestamp}\n"
-            f"Este es un mensaje de verificación del formato de alertas."
+            f"[PRUEBA] Apertura LONG\n"
+            f"Precio: 3500.00\n"
+            f"Hora: {ts_entry}\n"
+            f"Motivo: ALERTA_DE_PRUEBA"
         )
-        send_trade_notification(message)
+
+        closing_msg = (
+            f"{SYMBOL_DISPLAY} {STREAM_INTERVAL}\n"
+            f"[PRUEBA] Cierre LONG\n"
+            f"Entrada: 3500.00 ({ts_entry})\n"
+            f"Salida: 3600.00 ({ts_exit})\n"
+            f"Fees: 3.50\n"
+            f"Resultado: GANANCIA 96.50 (+2.76%)"
+        )
+
+        send_trade_notification(opening_msg)
+        send_trade_notification(closing_msg)
     except Exception as exc:
         print(f"[WATCHER][WARN] No se pudo enviar la alerta de prueba: {exc}")
 
