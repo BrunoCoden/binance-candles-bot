@@ -21,6 +21,7 @@ ALERT_STREAM_BARS = int(os.getenv("ALERT_STREAM_BARS", "5000"))
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 _chat_ids_raw = os.getenv("TELEGRAM_CHAT_IDS", "")
 TELEGRAM_CHAT_IDS = [part.strip() for part in _chat_ids_raw.replace(";", ",").split(",") if part.strip()]
+SIGNAL_ALERTS_ENABLED = os.getenv("ALERT_ENABLE_BOLLINGER_SIGNALS", "false").lower() == "true"
 
 LOCAL_TZ_NAME = os.getenv("TZ", "UTC")
 try:
@@ -114,6 +115,8 @@ def generate_alerts() -> list[dict]:
         return []
 
     log_stream_bar(frames["stream"])
+    if not SIGNAL_ALERTS_ENABLED:
+        return []
 
     alert = _bollinger_alert(frames["bollinger"], frames["stream"])
     return [alert] if alert else []

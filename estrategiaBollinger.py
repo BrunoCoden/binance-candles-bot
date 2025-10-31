@@ -16,10 +16,11 @@ from typing import Optional
 import pandas as pd
 
 from alerts import generate_alerts, format_alert_message
-from trade_logger import log_trade
+from trade_logger import log_trade, send_trade_notification
 
 
 POLL_SECONDS = float(os.getenv("STRAT_POLL_SECONDS", os.getenv("ALERT_POLL_SECONDS", "5")))
+FEE_RATE = float(os.getenv("STRAT_FEE_RATE", "0.0005"))
 
 
 @dataclass
@@ -38,6 +39,7 @@ class StrategyState:
         if self.current_position is None:
             return
         pos = self.current_position
+        fees = (pos.entry_price + exit_price) * FEE_RATE
         log_trade(
             direction=pos.direction,
             entry_price=pos.entry_price,
@@ -46,6 +48,8 @@ class StrategyState:
             exit_time=exit_time,
             entry_reason=pos.entry_reason,
             exit_reason=exit_reason,
+            fees=fees,
+            notify=True,
         )
         self.current_position = None
 
@@ -55,6 +59,15 @@ class StrategyState:
             return
         self.current_position = Position(direction, price, ts, reason)
         print(f"[STRAT] Nueva {direction.upper()} @ {price:.2f} (motivo: {reason})")
+        try:
+            send_trade_notification(
+                f"Nueva posición {direction.upper()}\n"
+                f"Precio: {price:.2f}\n"
+                f"Hora: {ts.isoformat() if hasattr(ts, 'isoformat') else ts}\n"
+                f"Motivo: {reason}"
+            )
+        except Exception as exc:
+            print(f"[STRAT][WARN] Error notificando apertura: {exc}")
 
 
 def _extract_price_from_alert(alert: dict) -> Optional[float]:
