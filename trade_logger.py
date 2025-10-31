@@ -5,9 +5,18 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import requests
+from zoneinfo import ZoneInfo
+from typing import Any
 
 
 DEFAULT_TRADES_PATH = os.getenv("STRAT_TRADES_CSV_PATH", "estrategia_trades.csv").strip()
+SYMBOL_DISPLAY = os.getenv("SYMBOL", "ETHUSDT.P")
+STREAM_INTERVAL = os.getenv("STREAM_INTERVAL", "30m").strip()
+TZ_NAME = os.getenv("TZ", "UTC")
+try:
+    LOCAL_TZ = ZoneInfo(TZ_NAME)
+except Exception:
+    LOCAL_TZ = ZoneInfo("UTC")
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 _chat_ids_raw = os.getenv("TELEGRAM_CHAT_IDS", "")
@@ -27,6 +36,18 @@ TRADE_COLUMNS = [
     "Fees",
     "Outcome",
 ]
+
+
+def format_timestamp(ts: Any) -> str:
+    try:
+        if not isinstance(ts, pd.Timestamp):
+            ts = pd.Timestamp(ts)
+        if ts.tzinfo is None:
+            ts = ts.tz_localize("UTC")
+        ts_local = ts.tz_convert(LOCAL_TZ)
+        return ts_local.strftime("%Y-%m-%d %H:%M:%S %Z")
+    except Exception:
+        return str(ts)
 
 
 def _prepare_csv(path: Path):
@@ -75,6 +96,7 @@ def log_trade(
     pnl_abs -= fees
     pnl_pct = pnl_abs / entry_price if entry_price else np.nan
     outcome = "win" if pnl_abs > 0 else ("loss" if pnl_abs < 0 else "flat")
+    outcome_label = "GANANCIA" if outcome == "win" else ("PÉRDIDA" if outcome == "loss" else "RESULTADO NEUTRO")
 
     data = {
         "EntryTime": entry_time.isoformat() if hasattr(entry_time, "isoformat") else str(entry_time),
@@ -93,21 +115,21 @@ def log_trade(
     if path is not None:
         pd.DataFrame([data]).to_csv(path, mode="a", header=False, index=False, encoding="utf-8")
     message = (
-        f"[TRADE] {direction.upper()} {entry_reason} → {exit_reason} | "
+        f"[TRADE] {SYMBOL_DISPLAY} {STREAM_INTERVAL} | {direction.upper()} {entry_reason} → {exit_reason} | "
         f"Entry {entry_price:.2f} Exit {exit_price:.2f} | Fees {fees:.2f} | PnL {pnl_abs:.2f} ({pnl_pct*100:.2f}%)"
     )
     print(message)
     if notify:
         try:
-            ts_entry = entry_time.isoformat() if hasattr(entry_time, "isoformat") else str(entry_time)
-            ts_exit = exit_time.isoformat() if hasattr(exit_time, "isoformat") else str(exit_time)
+            ts_entry = format_timestamp(entry_time)
+            ts_exit = format_timestamp(exit_time)
             tele_msg = (
-                f"Operación cerrada\n"
-                f"Dirección: {direction.upper()}\n"
+                f"{SYMBOL_DISPLAY} {STREAM_INTERVAL}\n"
+                f"Cierre {direction.upper()}\n"
                 f"Entrada: {entry_price:.2f} ({ts_entry})\n"
                 f"Salida: {exit_price:.2f} ({ts_exit})\n"
                 f"Fees: {fees:.2f}\n"
-                f"PnL: {pnl_abs:.2f} ({pnl_pct*100:.2f}%)"
+                f"Resultado: {outcome_label} {pnl_abs:.2f} ({pnl_pct*100:+.2f}%)"
             )
             _send_trade_notification(tele_msg)
         except Exception as exc:

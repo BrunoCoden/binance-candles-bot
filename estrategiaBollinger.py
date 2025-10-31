@@ -16,11 +16,13 @@ from typing import Optional
 import pandas as pd
 
 from alerts import generate_alerts, format_alert_message
-from trade_logger import log_trade, send_trade_notification
+from trade_logger import log_trade, send_trade_notification, format_timestamp
 
 
 POLL_SECONDS = float(os.getenv("STRAT_POLL_SECONDS", os.getenv("ALERT_POLL_SECONDS", "5")))
 FEE_RATE = float(os.getenv("STRAT_FEE_RATE", "0.0005"))
+SYMBOL_DISPLAY = os.getenv("SYMBOL", "ETHUSDT.P")
+STREAM_INTERVAL = os.getenv("STREAM_INTERVAL", "30m").strip()
 
 
 @dataclass
@@ -60,10 +62,12 @@ class StrategyState:
         self.current_position = Position(direction, price, ts, reason)
         print(f"[STRAT] Nueva {direction.upper()} @ {price:.2f} (motivo: {reason})")
         try:
+            ts_fmt = format_timestamp(ts)
             send_trade_notification(
-                f"Nueva posición {direction.upper()}\n"
+                f"{SYMBOL_DISPLAY} {STREAM_INTERVAL}\n"
+                f"Apertura {direction.upper()}\n"
                 f"Precio: {price:.2f}\n"
-                f"Hora: {ts.isoformat() if hasattr(ts, 'isoformat') else ts}\n"
+                f"Hora: {ts_fmt}\n"
                 f"Motivo: {reason}"
             )
         except Exception as exc:
