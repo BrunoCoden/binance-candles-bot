@@ -35,6 +35,8 @@ from trade_logger import log_trade, TRADE_COLUMNS
 BACKTEST_STREAM_BARS = int(os.getenv("BACKTEST_STREAM_BARS", "5000"))
 BACKTEST_CHANNEL_BARS = int(os.getenv("BACKTEST_CHANNEL_BARS", "5000"))  # legacy env, sin uso
 SHOW_PLOT = os.getenv("BACKTEST_PLOT_SHOW", "false").lower() == "true"
+STOP_LOSS_PCT = float(os.getenv("STRAT_STOP_LOSS_PCT", "0.055"))
+TAKE_PROFIT_PCT = float(os.getenv("STRAT_TAKE_PROFIT_PCT", "0.095"))
 
 COLUMN_ORDER = TRADE_COLUMNS
 
@@ -139,9 +141,58 @@ def _prepare_data(total_bars: int, *, start_ms: int | None, end_ms: int | None):
     if df_stream.empty:
         raise RuntimeError("Datos insuficientes para backtest.")
 
-    ohlc_stream = df_stream[["Open", "High", "Low", "Close", "Volume"]]
+    ohlc_stream = df_stream[["Open", "High", "Low", "Close", "Volume"]].copy()
+    if "CloseTimeDT" in df_stream.columns:
+        ohlc_stream["BarCloseTime"] = df_stream["CloseTimeDT"]
+    else:
+        close_offset = INTERVAL_MS.get(STREAM_INTERVAL, 0)
+        ohlc_stream["BarCloseTime"] = df_stream.index + pd.to_timedelta(close_offset, unit="ms")
     bb = compute_bollinger_bands(ohlc_stream, BB_LENGTH, BB_MULT).reindex(ohlc_stream.index).ffill()
     return ohlc_stream, bb
+
+
+def _compute_risk_levels(direction: str, entry_price: float) -> tuple[float | None, float | None]:
+    stop_price = None
+    take_price = None
+    if entry_price is None or entry_price <= 0:
+        return stop_price, take_price
+
+    if STOP_LOSS_PCT > 0:
+        if direction == "long":
+            stop_price = entry_price * (1 - STOP_LOSS_PCT)
+        else:
+            stop_price = entry_price * (1 + STOP_LOSS_PCT)
+
+    if TAKE_PROFIT_PCT > 0:
+        if direction == "long":
+            take_price = entry_price * (1 + TAKE_PROFIT_PCT)
+        else:
+            take_price = entry_price * (1 - TAKE_PROFIT_PCT)
+
+    return stop_price, take_price
+
+
+def _check_risk_exit(
+    position: dict,
+    bar_high: float,
+    bar_low: float,
+) -> tuple[float, str] | None:
+    direction = position["direction"]
+    stop_price = position.get("stop_price")
+    take_price = position.get("take_price")
+
+    if direction == "long":
+        if stop_price is not None and bar_low <= stop_price:
+            return float(stop_price), "stop_loss"
+        if take_price is not None and bar_high >= take_price:
+            return float(take_price), "take_profit"
+    else:
+        if stop_price is not None and bar_high >= stop_price:
+            return float(stop_price), "stop_loss"
+        if take_price is not None and bar_low <= take_price:
+            return float(take_price), "take_profit"
+
+    return None
 
 
 def _generate_signal(row_idx: int, ohlc: pd.DataFrame, bb: pd.DataFrame):
@@ -179,7 +230,9 @@ def _generate_signal(row_idx: int, ohlc: pd.DataFrame, bb: pd.DataFrame):
     crossed_lower = close_prev <= lower_prev and close_now > lower_now
     crossed_upper = close_prev >= upper_prev and close_now < upper_now
 
-    ts = ohlc.index[row_idx]
+    ts_open = ohlc.index[row_idx]
+    ts_close = ohlc["BarCloseTime"].iloc[row_idx] if "BarCloseTime" in ohlc.columns else ts_open
+    ts = ts_close if isinstance(ts_close, pd.Timestamp) else ts_open
     direction_filter = BB_DIRECTION
     basis_now = float(basis.iloc[row_idx]) if basis is not None and not np.isnan(basis.iloc[row_idx]) else np.nan
 
@@ -190,6 +243,7 @@ def _generate_signal(row_idx: int, ohlc: pd.DataFrame, bb: pd.DataFrame):
                 "direction": "long",
                 "message": f"{SYMBOL_DISPLAY} {STREAM_INTERVAL}: Señal Bollinger alcista en {lower_now:.2f}",
                 "price": lower_now,
+                "close_price": close_now,
                 "timestamp": ts,
                 "basis": basis_now,
                 "reference_band": lower_now,
@@ -202,6 +256,7 @@ def _generate_signal(row_idx: int, ohlc: pd.DataFrame, bb: pd.DataFrame):
                 "direction": "short",
                 "message": f"{SYMBOL_DISPLAY} {STREAM_INTERVAL}: Señal Bollinger bajista en {upper_now:.2f}",
                 "price": upper_now,
+                "close_price": close_now,
                 "timestamp": ts,
                 "basis": basis_now,
                 "reference_band": upper_now,
@@ -244,8 +299,27 @@ def run_backtest(
     position = None
 
     for i in range(1, len(ohlc)):
-        ts = ohlc.index[i]
-        price = float(ohlc["Close"].iloc[i])
+        ts_open = ohlc.index[i]
+        bar_close = float(ohlc["Close"].iloc[i])
+        bar_high = float(ohlc["High"].iloc[i])
+        bar_low = float(ohlc["Low"].iloc[i])
+        ts_close = (
+            ohlc["BarCloseTime"].iloc[i]
+            if "BarCloseTime" in ohlc.columns
+            else ts_open
+        )
+
+        if position:
+            risk_exit = _check_risk_exit(position, bar_high, bar_low)
+            if risk_exit:
+                exit_price, exit_reason = risk_exit
+                position["exit_meta"] = {
+                    "basis": position.get("entry_meta", {}).get("basis"),
+                    "stop_price": position.get("stop_price"),
+                    "take_price": position.get("take_price"),
+                }
+                trades.append(_finalize_trade(position, float(exit_price), ts_close, exit_reason, fee_rate))
+                position = None
 
         signals = _generate_signal(i, ohlc, bb)
         if not signals:
@@ -257,39 +331,55 @@ def run_backtest(
             if position and position["direction"] == direction:
                 continue
 
-            signal_price = float(signal.get("price", price))
-
             reference = signal.get("reference_band")
+            price_base = reference if reference is not None else signal.get("price", bar_close)
+            signal_price = float(price_base)
+            signal_ts = signal.get("timestamp", ts_open)
+
             basis_now = signal.get("basis")
 
             if position:
-                exit_price = reference if reference is not None else signal_price
-                try:
-                    exit_price = float(exit_price)
-                except Exception:
-                    exit_price = signal_price
-                position["exit_meta"] = {"basis": basis_now}
-                trades.append(_finalize_trade(position, exit_price, ts, signal["type"], fee_rate))
+                exit_price = float(reference) if reference is not None else signal_price
+                position["exit_meta"] = {
+                    "basis": basis_now,
+                    "reference_band": reference,
+                    "stop_price": position.get("stop_price"),
+                    "take_price": position.get("take_price"),
+                }
+                trades.append(_finalize_trade(position, exit_price, signal_ts, signal["type"], fee_rate))
                 position = None
 
-            entry_price = reference if reference is not None else signal_price
-            try:
-                entry_price = float(entry_price)
-            except Exception:
-                entry_price = signal_price
+            entry_price = float(reference) if reference is not None else signal_price
 
             position = {
                 "direction": direction,
                 "entry_price": entry_price,
-                "entry_time": ts,
+                "entry_time": signal_ts,
                 "entry_reason": signal["type"],
-                "entry_meta": {"basis": basis_now},
+                "entry_meta": {
+                    "basis": basis_now,
+                    "reference_band": reference,
+                },
             }
+            stop_price, take_price = _compute_risk_levels(direction, entry_price)
+            if stop_price is not None:
+                position["stop_price"] = float(stop_price)
+            if take_price is not None:
+                position["take_price"] = float(take_price)
 
     if position:
         fallback_exit = position["entry_price"]
-        position["exit_meta"] = {"basis": position.get("entry_meta", {}).get("basis")}
-        trades.append(_finalize_trade(position, float(fallback_exit), ohlc.index[-1], "end_of_data", fee_rate))
+        position["exit_meta"] = {
+            "basis": position.get("entry_meta", {}).get("basis"),
+            "stop_price": position.get("stop_price"),
+            "take_price": position.get("take_price"),
+        }
+        final_ts = (
+            ohlc["BarCloseTime"].iloc[-1]
+            if "BarCloseTime" in ohlc.columns
+            else ohlc.index[-1]
+        )
+        trades.append(_finalize_trade(position, float(fallback_exit), final_ts, "end_of_data", fee_rate))
 
     trades_path = Path(trades_path)
     plot_path = Path(plot_path)

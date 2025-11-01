@@ -4,8 +4,9 @@ import pandas as pd
 import requests
 from zoneinfo import ZoneInfo
 
-from paginado_binance import fetch_klines_paginado
+from paginado_binance import fetch_klines_paginado, INTERVAL_MS
 from tabla_alertas import log_stream_bar
+from backtest.realtime_backtest import process_realtime_signal, evaluate_realtime_risk
 from velas import (
     SYMBOL_DISPLAY,
     API_SYMBOL,
@@ -35,7 +36,12 @@ def _prepare_frames() -> dict | None:
     if df_stream.empty:
         return None
 
-    ohlc_stream = df_stream[["Open", "High", "Low", "Close", "Volume"]]
+    ohlc_stream = df_stream[["Open", "High", "Low", "Close", "Volume"]].copy()
+    if "CloseTimeDT" in df_stream.columns:
+        ohlc_stream["BarCloseTime"] = df_stream["CloseTimeDT"]
+    else:
+        interval_ms = INTERVAL_MS.get(STREAM_INTERVAL, 0)
+        ohlc_stream["BarCloseTime"] = df_stream.index + pd.to_timedelta(interval_ms, unit="ms")
     bb = compute_bollinger_bands(ohlc_stream, BB_LENGTH, BB_MULT)
     bb_aligned = bb.reindex(ohlc_stream.index).ffill()
 
@@ -90,17 +96,19 @@ def _bollinger_alert(bb_aligned: pd.DataFrame, ohlc_stream: pd.DataFrame):
         return None
 
     last_bar = ohlc_stream.iloc[-1]
+    bar_close_ts = last_bar.get("BarCloseTime", last_idx)
     volume = float(last_bar.get("Volume", np.nan))
     basis_now = float(basis.iloc[-1]) if basis is not None else np.nan
 
     return {
         "type": "bollinger_signal",
-        "timestamp": last_idx,
+        "timestamp": bar_close_ts if isinstance(bar_close_ts, pd.Timestamp) else last_idx,
         "message": (
             f"{SYMBOL_DISPLAY} {STREAM_INTERVAL}: Señal Bollinger {trend} en {trigger_price:.2f} "
             f"(banda de referencia {ref_price:.2f})"
         ),
         "price": trigger_price,
+        "close_price": close_now,
         "direction": direction,
         "basis": basis_now,
         "reference_band": ref_price,
@@ -115,11 +123,21 @@ def generate_alerts() -> list[dict]:
         return []
 
     log_stream_bar(frames["stream"])
+    try:
+        evaluate_realtime_risk(frames["stream"], profile="tr")
+    except Exception as exc:
+        print(f"[ALERT][WARN] No se pudo evaluar SL/TP en tiempo real ({exc})")
     if not SIGNAL_ALERTS_ENABLED:
         return []
 
     alert = _bollinger_alert(frames["bollinger"], frames["stream"])
-    return [alert] if alert else []
+    if alert:
+        try:
+            process_realtime_signal(alert, profile="tr")
+        except Exception as exc:
+            print(f"[ALERT][WARN] No se pudo actualizar el backtest en tiempo real ({exc})")
+        return [alert]
+    return []
 
 
 def format_alert_message(alert: dict) -> str:
