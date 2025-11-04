@@ -40,6 +40,17 @@ def _notify_startup():
 
         send_trade_notification(opening_msg)
         send_trade_notification(closing_msg)
+
+        sample_alert = {
+            "type": "heartbeat_test",
+            "timestamp": now_utc,
+            "message": (
+                f"{SYMBOL_DISPLAY} {STREAM_INTERVAL}: [PRUEBA] Señal formateada\n"
+                f"Entrada simulada 3500 → 3600 (+2.76%)"
+            ),
+            "direction": "long",
+        }
+        send_alerts([sample_alert])
     except Exception as exc:
         print(f"[WATCHER][WARN] No se pudo enviar la alerta de prueba: {exc}")
 

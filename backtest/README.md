@@ -94,6 +94,27 @@ python backtest/order_fill_listener.py --profile tr
 
 Mantenelo corriendo junto al watcher de señales si necesitás una simulación intradía con precisión de minuto.
 
+### Heartbeat / Verificador de vida
+
+Para recibir un aviso cada 3 horas (o la frecuencia que definas) indicando si los procesos críticos siguen activos, podés usar el heartbeat incluido en la raíz del repo:
+
+```bash
+python heartbeat_monitor.py --interval-hours 3
+```
+
+- Por defecto chequea que estén corriendo `python watcher_alertas.py`, `python backtest/order_fill_listener.py` y `python estrategiaBollinger.py`. Podés ajustar la lista con la variable `HEARTBEAT_PROCESSES`, usando `;` o `,` como separador.
+- El heartbeat reutiliza el mismo bot/configuración de Telegram (variables `TELEGRAM_BOT_TOKEN` y `TELEGRAM_CHAT_IDS`). A cada intervalo envía un mensaje con el resumen de estado.
+- Para pruebas puntuales, agregá `--once` y solo mandará una notificación.
+
+También podés lanzar el listener de comandos para responder manualmente en cualquier momento con `/estavivo` y obtener el mismo estado bajo demanda:
+
+```bash
+python telegram_bot_commands.py
+```
+
+- Reconoce `/start`, `/help` y `/estavivo`. Este último genera el reporte instantáneo usando la lista de procesos definida en `HEARTBEAT_PROCESSES`.
+- El comando responde únicamente a los chats listados en `TELEGRAM_CHAT_IDS` (si está vacío, acepta a todos).
+
 ## Consejos y buenas prácticas
 
 - Confirmá que `alerts_stream.csv` esté poblado si querés overlay de precios en el dashboard; el watcher `watcher_alertas.py` lo genera automáticamente.
