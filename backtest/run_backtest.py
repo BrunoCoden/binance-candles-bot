@@ -297,6 +297,8 @@ def run_backtest(
         raise RuntimeError("El rango temporal seleccionado devolvió menos de 2 velas; no se puede ejecutar el backtest.")
     trades = []
     position = None
+    pending_order = None
+    last_signal_direction = None
 
     for i in range(1, len(ohlc)):
         ts_open = ohlc.index[i]
@@ -321,6 +323,35 @@ def run_backtest(
                 trades.append(_finalize_trade(position, float(exit_price), ts_close, exit_reason, fee_rate))
                 position = None
 
+        if pending_order and position is None:
+            entry_price = float(pending_order["entry_price"])
+            direction = pending_order["direction"]
+            filled = False
+            if direction == "long" and bar_low <= entry_price:
+                filled = True
+            elif direction == "short" and bar_high >= entry_price:
+                filled = True
+
+            if filled:
+                entry_ts = ts_close if isinstance(ts_close, pd.Timestamp) else ts_open
+                entry_time = pd.Timestamp(entry_ts)
+                position = {
+                    "direction": direction,
+                    "entry_price": entry_price,
+                    "entry_time": entry_time,
+                    "entry_reason": pending_order["entry_reason"],
+                    "entry_meta": {
+                        **pending_order.get("entry_meta", {}),
+                        "order_time": pending_order.get("order_time"),
+                    },
+                }
+                stop_price, take_price = _compute_risk_levels(direction, entry_price)
+                if stop_price is not None:
+                    position["stop_price"] = float(stop_price)
+                if take_price is not None:
+                    position["take_price"] = float(take_price)
+                pending_order = None
+
         signals = _generate_signal(i, ohlc, bb)
         if not signals:
             continue
@@ -330,11 +361,15 @@ def run_backtest(
 
             if position and position["direction"] == direction:
                 continue
+            if pending_order and pending_order.get("direction") == direction:
+                continue
+            if last_signal_direction == direction:
+                continue
 
             reference = signal.get("reference_band")
             price_base = reference if reference is not None else signal.get("price", bar_close)
             signal_price = float(price_base)
-            signal_ts = signal.get("timestamp", ts_open)
+            signal_ts = pd.Timestamp(signal.get("timestamp", ts_open))
 
             basis_now = signal.get("basis")
 
@@ -351,21 +386,20 @@ def run_backtest(
 
             entry_price = float(reference) if reference is not None else signal_price
 
-            position = {
+            if pending_order and pending_order.get("direction") != direction:
+                pending_order = None
+
+            pending_order = {
                 "direction": direction,
                 "entry_price": entry_price,
-                "entry_time": signal_ts,
+                "order_time": signal_ts,
                 "entry_reason": signal["type"],
                 "entry_meta": {
                     "basis": basis_now,
                     "reference_band": reference,
                 },
             }
-            stop_price, take_price = _compute_risk_levels(direction, entry_price)
-            if stop_price is not None:
-                position["stop_price"] = float(stop_price)
-            if take_price is not None:
-                position["take_price"] = float(take_price)
+            last_signal_direction = direction
 
     if position:
         fallback_exit = position["entry_price"]
@@ -380,6 +414,8 @@ def run_backtest(
             else ohlc.index[-1]
         )
         trades.append(_finalize_trade(position, float(fallback_exit), final_ts, "end_of_data", fee_rate))
+    if pending_order:
+        pending_order = None
 
     trades_path = Path(trades_path)
     plot_path = Path(plot_path)
@@ -415,6 +451,9 @@ def _finalize_trade(position, exit_price, exit_time, exit_reason, fee_rate: floa
     entry_meta = position.get("entry_meta") or {}
     exit_meta = position.get("exit_meta") or {}
 
+    order_time = entry_meta.get("order_time")
+    order_time_ts = pd.Timestamp(order_time) if order_time is not None else entry_time
+
     fees = (abs(entry_price) + abs(exit_price)) * fee_rate
 
     log_trade(
@@ -422,6 +461,7 @@ def _finalize_trade(position, exit_price, exit_time, exit_reason, fee_rate: floa
         entry_price=entry_price,
         exit_price=exit_price,
         entry_time=entry_time,
+        order_time=order_time_ts,
         exit_time=exit_time,
         entry_reason=entry_reason,
         exit_reason=exit_reason,
@@ -436,6 +476,7 @@ def _finalize_trade(position, exit_price, exit_time, exit_reason, fee_rate: floa
 
     return [
         entry_time.isoformat(),
+        order_time_ts.isoformat() if hasattr(order_time_ts, "isoformat") else str(order_time_ts),
         exit_time.isoformat(),
         direction,
         entry_price,

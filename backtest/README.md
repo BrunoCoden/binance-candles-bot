@@ -77,6 +77,23 @@ python backtest/build_dashboard.py --profile tr --price alerts_stream.csv
 
 Los dashboards incluyen resumen estadístico, PnL acumulado, histograma de rendimiento y tablas con los últimos trades/operaciones. El archivo resultante se guarda en `backtest/backtestTR/dashboard.html` o `backtest/backtestHistorico/dashboard.html` según el perfil elegido.
 
+### Listener para minuto exacto de fills
+
+Si querés capturar el minuto exacto en que se ejecuta una orden pendiente, corré el listener dedicado (opera sobre el mismo `realtime_state.json` que usa el backtest en vivo):
+
+```bash
+python backtest/order_fill_listener.py --profile tr
+```
+
+- Monitorea las órdenes con `status=pending` y consulta velas de 1 minuto para detectar el primer cruce del precio objetivo.
+- Actualiza el estado a `open` con el timestamp de esa vela (UTC) y mantiene la misma lógica de SL/TP definida por la estrategia.
+- Parámetros opcionales:
+  - `--poll-seconds` (default 15) ajusta la frecuencia de consulta.
+  - `--tolerance` permite sumar una tolerancia absoluta al match del precio.
+  - `--lookback-minutes` define la ventana de búsqueda al reconstruir la vela que ejecutó la orden.
+
+Mantenelo corriendo junto al watcher de señales si necesitás una simulación intradía con precisión de minuto.
+
 ## Consejos y buenas prácticas
 
 - Confirmá que `alerts_stream.csv` esté poblado si querés overlay de precios en el dashboard; el watcher `watcher_alertas.py` lo genera automáticamente.

@@ -11,8 +11,19 @@ from typing import Any, Dict
 
 import pandas as pd
 
-from .config import OUTPUT_PRESETS, resolve_profile
-from .run_backtest import _finalize_trade, _fetch_fee_rate, BACKTEST_STREAM_BARS
+try:
+    from .config import OUTPUT_PRESETS, resolve_profile
+    from .run_backtest import _finalize_trade, _fetch_fee_rate, BACKTEST_STREAM_BARS
+except ImportError:  # ejecución como script directo
+    import sys
+    CURRENT_DIR = Path(__file__).resolve().parent
+    if str(CURRENT_DIR) not in sys.path:
+        sys.path.append(str(CURRENT_DIR))
+    if str(CURRENT_DIR.parent) not in sys.path:
+        sys.path.append(str(CURRENT_DIR.parent))
+    from config import OUTPUT_PRESETS, resolve_profile  # type: ignore
+    from run_backtest import _finalize_trade, _fetch_fee_rate, BACKTEST_STREAM_BARS  # type: ignore
+
 from velas import API_SYMBOL, STREAM_INTERVAL, compute_bollinger_bands, BB_LENGTH, BB_MULT
 from trade_logger import TRADE_COLUMNS
 from paginado_binance import fetch_klines_paginado, INTERVAL_MS
@@ -113,7 +124,9 @@ def _refresh_plot(trades_path: Path) -> None:
             offset = INTERVAL_MS.get(STREAM_INTERVAL, 0)
             ohlc["BarCloseTime"] = df_stream.index + pd.to_timedelta(offset, unit="ms")
 
-        trades_df = pd.read_csv(trades_path, parse_dates=["EntryTime", "ExitTime"])
+        from .build_dashboard import load_trades as _load_trades_df
+
+        trades_df = _load_trades_df(trades_path)
         if trades_df.empty:
             return
 
@@ -161,9 +174,15 @@ def process_realtime_signal(signal: dict[str, Any], *, profile: str = "tr") -> N
     trades_path.parent.mkdir(parents=True, exist_ok=True)
 
     state = _load_state(trades_path)
+    last_signal_direction = (state or {}).get("last_signal_direction")
+    state_status = (state or {}).get("status")
+    if state is not None and state_status not in {"pending", "open"}:
+        state_status = None
 
     direction = signal.get("direction")
     if not direction:
+        return
+    if last_signal_direction == direction:
         return
 
     ts_raw = signal.get("timestamp")
@@ -171,20 +190,18 @@ def process_realtime_signal(signal: dict[str, Any], *, profile: str = "tr") -> N
     reference_band = signal.get("reference_band")
     close_raw = reference_band if reference_band is not None else signal.get("price")
     try:
-        trade_price = float(close_raw)
+        order_price = float(close_raw)
     except Exception:
-        trade_price = float(signal.get("price", 0.0))
+        order_price = float(signal.get("price", 0.0))
 
     basis_now = signal.get("basis")
     signal_type = signal.get("type", "unknown_signal")
 
-    if state and state.get("direction") == direction:
-        # Señal en la misma dirección que la posición abierta; se ignora (misma lógica del backtest).
-        return
-
     fee_rate = _fee_rate()
 
-    if state:
+    if state and state_status == "open":
+        if state.get("direction") == direction:
+            return
         try:
             position = {
                 "direction": state["direction"],
@@ -195,32 +212,32 @@ def process_realtime_signal(signal: dict[str, Any], *, profile: str = "tr") -> N
             }
             position["exit_meta"] = {
                 "basis": basis_now,
-                "reference_band": reference_band,
-                "stop_price": state.get("stop_price"),
-                "take_price": state.get("take_price"),
-            }
-            exit_price = float(reference_band) if reference_band is not None else trade_price
+                    "reference_band": reference_band,
+                    "stop_price": state.get("stop_price"),
+                    "take_price": state.get("take_price"),
+                }
+            exit_price = float(reference_band) if reference_band is not None else order_price
             row = _finalize_trade(position, exit_price, signal_ts, signal_type, fee_rate)
             _append_trade_row(trades_path, row)
         except Exception as exc:
             print(f"[REALTIME][WARN] No se pudo cerrar la posición previa ({exc})")
-
-    stop_price, take_price = _compute_risk_levels(direction, trade_price)
+    if state and state_status == "pending" and state.get("direction") == direction:
+        return
+    if state and state_status == "pending" and state.get("direction") != direction:
+        state = None
 
     new_state = {
+        "status": "pending",
         "direction": direction,
-        "entry_price": trade_price,
-        "entry_time": signal_ts.isoformat(),
+        "entry_price": order_price,
+        "order_time": signal_ts.isoformat(),
         "entry_reason": signal_type,
         "entry_meta": {
             "basis": basis_now,
             "reference_band": reference_band,
         },
+        "last_signal_direction": direction,
     }
-    if stop_price is not None:
-        new_state["stop_price"] = float(stop_price)
-    if take_price is not None:
-        new_state["take_price"] = float(take_price)
     _save_state(new_state, trades_path)
 
     if trades_path.exists():
@@ -246,21 +263,75 @@ def evaluate_realtime_risk(ohlc_stream: pd.DataFrame, *, profile: str = "tr") ->
     state = _load_state(trades_path)
     if not state:
         return
+    status = state.get("status")
+    if status not in {"pending", "open"}:
+        return
 
     direction = state.get("direction")
-    entry_price = float(state.get("entry_price", 0.0))
-    stop_price = state.get("stop_price")
-    take_price = state.get("take_price")
-    entry_time = _ensure_timestamp(state.get("entry_time"))
+    entry_price_val = state.get("entry_price", 0.0)
+    try:
+        entry_price = float(entry_price_val)
+    except Exception:
+        entry_price = 0.0
 
     if direction not in {"long", "short"} or entry_price <= 0:
         return
 
+    fee_rate = _fee_rate()
+
+    last_signal_direction = state.get("last_signal_direction", direction)
+
+    if status == "pending":
+        order_time_raw = state.get("order_time") or state.get("entry_time")
+        if not order_time_raw:
+            return
+        order_time = _ensure_timestamp(order_time_raw)
+
+        for idx, row in ohlc_stream.iterrows():
+            ts_close = row.get("BarCloseTime", idx)
+            ts_close_ts = _ensure_timestamp(ts_close)
+            if ts_close_ts <= order_time:
+                continue
+            bar_low = float(row["Low"])
+            bar_high = float(row["High"])
+            filled = False
+            if direction == "long" and bar_low <= entry_price:
+                filled = True
+            elif direction == "short" and bar_high >= entry_price:
+                filled = True
+            if filled:
+                entry_time = ts_close_ts
+                stop_price, take_price = _compute_risk_levels(direction, entry_price)
+                new_state = {
+                    "status": "open",
+                    "direction": direction,
+                    "entry_price": entry_price,
+                    "entry_time": entry_time.isoformat(),
+                    "entry_reason": state.get("entry_reason", "signal"),
+                    "entry_meta": {
+                        **(state.get("entry_meta") or {}),
+                        "order_time": state.get("order_time"),
+                    },
+                    "last_signal_direction": last_signal_direction,
+                }
+                if stop_price is not None:
+                    new_state["stop_price"] = float(stop_price)
+                if take_price is not None:
+                    new_state["take_price"] = float(take_price)
+                _save_state(new_state, trades_path)
+                break
+        return
+
+    stop_price = state.get("stop_price")
+    take_price = state.get("take_price")
+    entry_time_raw = state.get("entry_time")
+    if not entry_time_raw:
+        return
+    entry_time = _ensure_timestamp(entry_time_raw)
+
     position_data = ohlc_stream.loc[entry_time:]
     if position_data.empty:
         return
-
-    fee_rate = _fee_rate()
 
     for idx, row in position_data.iterrows():
         bar_high = float(row["High"])
@@ -289,7 +360,7 @@ def evaluate_realtime_risk(ohlc_stream: pd.DataFrame, *, profile: str = "tr") ->
             position = {
                 "direction": direction,
                 "entry_price": entry_price,
-                "entry_time": _ensure_timestamp(state["entry_time"]),
+                "entry_time": entry_time,
                 "entry_reason": state.get("entry_reason", "signal"),
                 "entry_meta": state.get("entry_meta") or {},
                 "stop_price": stop_price,
@@ -302,7 +373,7 @@ def evaluate_realtime_risk(ohlc_stream: pd.DataFrame, *, profile: str = "tr") ->
             exit_ts = ts_close if isinstance(ts_close, pd.Timestamp) else _ensure_timestamp(ts_close)
             row_data = _finalize_trade(position, exit_price, exit_ts, exit_reason, fee_rate)
             _append_trade_row(trades_path, row_data)
-            _save_state(None, trades_path)
+            _save_state({"last_signal_direction": last_signal_direction}, trades_path)
             if trades_path.exists():
                 try:
                     _rebuild_dashboard(resolved_profile, trades_path)

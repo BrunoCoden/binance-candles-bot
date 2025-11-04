@@ -1,5 +1,6 @@
 # build_dashboard.py
 import argparse
+import html
 import os
 import sys
 import webbrowser
@@ -48,6 +49,10 @@ def load_trades(path: Path) -> pd.DataFrame:
         df["EntryTime"] = pd.to_datetime(df["EntryTime"])
     if "ExitTime" in df.columns:
         df["ExitTime"] = pd.to_datetime(df["ExitTime"])
+    if "OrderTime" in df.columns:
+        df["OrderTime"] = pd.to_datetime(df["OrderTime"])
+    else:
+        df["OrderTime"] = df.get("EntryTime")
     return df
 
 
@@ -225,15 +230,143 @@ def build_summary_html(summary: dict) -> str:
     """
 
 
-def build_trades_table(trades: pd.DataFrame, limit: int = 50) -> str:
-    subset = trades.tail(limit).copy()
-    subset["EntryTime"] = subset["EntryTime"].dt.strftime("%Y-%m-%d %H:%M:%S")
-    subset["ExitTime"] = subset["ExitTime"].dt.strftime("%Y-%m-%d %H:%M:%S")
-    html_table = subset.to_html(index=False, classes="trades-table")
+def _fmt_two(value, *, blank: str = "") -> str:
+    try:
+        num = float(value)
+    except (TypeError, ValueError):
+        return blank
+    if pd.isna(num):
+        return blank
+    return f"{num:.2f}"
+
+
+def _fmt_pct(value, *, blank: str = "") -> str:
+    try:
+        num = float(value)
+    except (TypeError, ValueError):
+        return blank
+    if pd.isna(num):
+        return blank
+    return f"{num * 100:.5f}%"
+
+
+def _fmt_timestamp(value, fmt: str) -> str:
+    if value is None:
+        return ""
+    try:
+        ts = pd.Timestamp(value)
+    except Exception:
+        text = str(value)
+        return "" if not text or text.lower() in {"nat", "nan"} else text
+    if pd.isna(ts):
+        return ""
+    return ts.strftime(fmt)
+
+
+def _safe_text(value, *, blank: str = "") -> str:
+    if value is None:
+        return blank
+    if isinstance(value, float) and pd.isna(value):
+        return blank
+    text = str(value).strip()
+    if not text or text.lower() in {"nan", "nat"}:
+        return blank
+    return text
+
+
+def _normalize_value(value) -> str:
+    text = _safe_text(value, blank="")
+    return text.lower()
+
+
+def _data_attr_name(key: str) -> str:
+    parts: list[str] = []
+    for ch in key:
+        if ch.isupper():
+            parts.append("-")
+            parts.append(ch.lower())
+        else:
+            parts.append(ch)
+    return "data-" + "".join(parts)
+
+
+def build_trades_table(trades: pd.DataFrame) -> str:
+    columns = [
+        ("EntryTime", "Entrada"),
+        ("OrderTime", "Orden Banda"),
+        ("ExitTime", "Salida"),
+        ("Direction", "Dirección"),
+        ("EntryReason", "Motivo Entrada"),
+        ("ExitReason", "Motivo Salida"),
+        ("EntryPrice", "Precio Entrada"),
+        ("ExitPrice", "Precio Salida"),
+        ("Outcome", "Resultado"),
+        ("PnLAbs", "PnL"),
+        ("PnLPct", "PnL %"),
+        ("Fees", "Fees"),
+    ]
+
+    header_cells = "".join(f"<th>{label}</th>" for _, label in columns)
+    rows_html: list[str] = []
+
+    for _, row in trades.iterrows():
+        attrs = {
+            "direction": _normalize_value(row.get("Direction")),
+            "entryReason": _normalize_value(row.get("EntryReason")),
+            "exitReason": _normalize_value(row.get("ExitReason")),
+            "outcome": _normalize_value(row.get("Outcome")),
+        }
+        attr_parts = [
+            f'{_data_attr_name(key)}="{html.escape(value)}"'
+            for key, value in attrs.items()
+            if value
+        ]
+        attr_str = f" {' '.join(attr_parts)}" if attr_parts else ""
+
+        cells: list[str] = []
+        direction_raw = _safe_text(row.get("Direction"), blank="")
+        direction_norm = direction_raw.lower() if direction_raw else ""
+        outcome_raw = _safe_text(row.get("Outcome"), blank="")
+        outcome_norm = outcome_raw.lower() if outcome_raw else ""
+
+        for key, _ in columns:
+            if key in {"EntryTime", "OrderTime", "ExitTime"}:
+                text = _fmt_timestamp(row.get(key), "%Y-%m-%d %H:%M:%S")
+                cells.append(f"<td>{html.escape(text)}</td>")
+            elif key in {"EntryPrice", "ExitPrice", "PnLAbs", "Fees"}:
+                text = _fmt_two(row.get(key), blank="")
+                cells.append(f"<td>{html.escape(text)}</td>")
+            elif key == "PnLPct":
+                text = _fmt_pct(row.get(key), blank="")
+                cells.append(f"<td>{html.escape(text)}</td>")
+            elif key == "Direction":
+                if direction_raw:
+                    cells.append(
+                        f"<td class='dir {direction_norm}'>{html.escape(direction_raw.upper())}</td>"
+                    )
+                else:
+                    cells.append("<td></td>")
+            elif key == "Outcome":
+                if outcome_raw:
+                    cells.append(
+                        f"<td class='result {outcome_norm}'>{html.escape(outcome_raw.upper())}</td>"
+                    )
+                else:
+                    cells.append("<td></td>")
+            else:
+                text = _safe_text(row.get(key), blank="")
+                cells.append(f"<td>{html.escape(text)}</td>")
+
+        rows_html.append(f"<tr{attr_str}>{''.join(cells)}</tr>")
+
+    body_rows = "".join(rows_html)
     return f"""
     <section class="trades">
-        <h2>Últimos trades (hasta {limit})</h2>
-        {html_table}
+        <h2>Todos los trades</h2>
+        <table class="trades-table filterable">
+            <thead><tr>{header_cells}</tr></thead>
+            <tbody>{body_rows}</tbody>
+        </table>
     </section>
     """
 
@@ -241,44 +374,137 @@ def build_trades_table(trades: pd.DataFrame, limit: int = 50) -> str:
 def build_operations_table(trades: pd.DataFrame, limit: int = 15) -> str:
     columns = [
         ("EntryTime", "Entrada"),
+        ("OrderTime", "Orden Banda"),
         ("Direction", "Dirección"),
-        ("EntryPrice", "Precio Entrada"),
+        ("EntryReason", "Motivo Entrada"),
+        ("ExitReason", "Motivo Salida"),
         ("ExitTime", "Salida"),
+        ("EntryPrice", "Precio Entrada"),
         ("ExitPrice", "Precio Salida"),
         ("Outcome", "Resultado"),
         ("PnLAbs", "PnL"),
         ("PnLPct", "PnL %"),
         ("Fees", "Fees"),
     ]
-    subset = trades.tail(limit).copy()
-    subset["EntryTimeFmt"] = subset["EntryTime"].dt.strftime("%d-%m %H:%M")
-    subset["ExitTimeFmt"] = subset["ExitTime"].dt.strftime("%d-%m %H:%M")
-    rows_html = []
-    for _, row in subset.iterrows():
-        pnl_pct = row.get("PnLPct", 0) * 100 if pd.notna(row.get("PnLPct")) else 0
-        cells = [
-            f"<td>{row['EntryTimeFmt']}</td>",
-            f"<td class='dir {row['Direction']}'>{row['Direction'].upper()}</td>",
-            f"<td>{row['EntryPrice']:.2f}</td>",
-            f"<td>{row['ExitTimeFmt']}</td>",
-            f"<td>{row['ExitPrice']:.2f}</td>",
-            f"<td class='result {row['Outcome']}'>{row['Outcome'].upper()}</td>",
-            f"<td>{row['PnLAbs']:.2f}</td>",
-            f"<td>{pnl_pct:.2f}%</td>",
-            f"<td>{row.get('Fees', 0.0):.2f}</td>",
-        ]
-        rows_html.append("".join(cells))
 
+    subset = trades.tail(limit)
     header_cells = "".join(f"<th>{label}</th>" for _, label in columns)
-    body_rows = "".join(f"<tr>{row}</tr>" for row in rows_html)
+    rows_html: list[str] = []
 
+    for _, row in subset.iterrows():
+        attrs = {
+            "direction": _normalize_value(row.get("Direction")),
+            "entryReason": _normalize_value(row.get("EntryReason")),
+            "exitReason": _normalize_value(row.get("ExitReason")),
+            "outcome": _normalize_value(row.get("Outcome")),
+        }
+        attr_parts = [
+            f'{_data_attr_name(key)}="{html.escape(value)}"'
+            for key, value in attrs.items()
+            if value
+        ]
+        attr_str = f" {' '.join(attr_parts)}" if attr_parts else ""
+
+        direction_raw = _safe_text(row.get("Direction"), blank="")
+        direction_norm = direction_raw.lower() if direction_raw else ""
+        outcome_raw = _safe_text(row.get("Outcome"), blank="")
+        outcome_norm = outcome_raw.lower() if outcome_raw else ""
+
+        cells: list[str] = []
+        for key, _ in columns:
+            if key in {"EntryTime", "OrderTime", "ExitTime"}:
+                text = _fmt_timestamp(row.get(key), "%d-%m %H:%M")
+                cells.append(f"<td>{html.escape(text or '--')}</td>")
+            elif key in {"EntryPrice", "ExitPrice", "PnLAbs", "Fees"}:
+                text = _fmt_two(row.get(key), blank="--")
+                cells.append(f"<td>{html.escape(text)}</td>")
+            elif key == "PnLPct":
+                text = _fmt_pct(row.get(key), blank="--")
+                cells.append(f"<td>{html.escape(text)}</td>")
+            elif key == "Direction":
+                if direction_raw:
+                    cells.append(
+                        f"<td class='dir {direction_norm}'>{html.escape(direction_raw.upper())}</td>"
+                    )
+                else:
+                    cells.append("<td></td>")
+            elif key == "Outcome":
+                if outcome_raw:
+                    cells.append(
+                        f"<td class='result {outcome_norm}'>{html.escape(outcome_raw.upper())}</td>"
+                    )
+                else:
+                    cells.append("<td></td>")
+            else:
+                text = _safe_text(row.get(key), blank="--")
+                cells.append(f"<td>{html.escape(text)}</td>")
+
+        rows_html.append(f"<tr{attr_str}>{''.join(cells)}</tr>")
+
+    body_rows = "".join(rows_html)
     return f"""
     <section class="ops">
         <h2>Detalle Operativo Reciente</h2>
-        <table class="ops-table">
+        <table class="ops-table filterable">
             <thead><tr>{header_cells}</tr></thead>
             <tbody>{body_rows}</tbody>
         </table>
+    </section>
+    """
+
+
+def _collect_filter_values(series: pd.Series | None) -> list[tuple[str, str]]:
+    if series is None:
+        return []
+    try:
+        iterable = series.dropna().unique()
+    except Exception:
+        iterable = []
+
+    mapping: dict[str, str] = {}
+    for raw in iterable:
+        label = _safe_text(raw, blank="")
+        norm = _normalize_value(raw)
+        if not norm:
+            continue
+        mapping.setdefault(norm, label)
+
+    return sorted(mapping.items(), key=lambda item: item[1].lower())
+
+
+def build_filters_html(trades: pd.DataFrame) -> str:
+    specs = [
+        ("direction", "Dirección", trades["Direction"] if "Direction" in trades.columns else None),
+        ("entryReason", "Motivo Entrada", trades["EntryReason"] if "EntryReason" in trades.columns else None),
+        ("exitReason", "Motivo Salida", trades["ExitReason"] if "ExitReason" in trades.columns else None),
+        ("outcome", "Resultado", trades["Outcome"] if "Outcome" in trades.columns else None),
+    ]
+
+    controls = []
+    for key, label, series in specs:
+        options = _collect_filter_values(series)
+        options_html = "".join(
+            f"<option value='{html.escape(value)}'>{html.escape(display)}</option>"
+            for value, display in options
+        )
+        control_html = f"""
+        <label>
+            <span>{html.escape(label)}:</span>
+            <select data-filter-key="{key}">
+                <option value="">Todos</option>
+                {options_html}
+            </select>
+        </label>
+        """
+        controls.append(control_html)
+
+    controls_html = "".join(controls)
+    return f"""
+    <section class="filters">
+        <h2>Filtrar trades</h2>
+        <div class="filters-grid">
+            {controls_html}
+        </div>
     </section>
     """
 
@@ -296,6 +522,7 @@ def render_dashboard(trades_path: Path, price_path: Path | None, html_out: Path,
     fig_html = fig.to_html(full_html=False, include_plotlyjs="cdn", config={"displaylogo": False})
 
     summary_html = build_summary_html(summary)
+    filters_html = build_filters_html(trades_df)
     ops_table_html = build_operations_table(trades_df)
     trades_table_html = build_trades_table(trades_df)
 
@@ -382,6 +609,45 @@ def render_dashboard(trades_path: Path, price_path: Path | None, html_out: Path,
             color: #fbbf24;
             font-weight: 600;
         }}
+        .filters {{
+            margin-top: 32px;
+            padding: 18px 20px;
+            background: #1e293b;
+            border-radius: 10px;
+        }}
+        .filters h2 {{
+            margin: 0 0 12px;
+            font-size: 1.2rem;
+        }}
+        .filters-grid {{
+            display: flex;
+            flex-wrap: wrap;
+            gap: 16px 24px;
+        }}
+        .filters label {{
+            display: flex;
+            flex-direction: column;
+            font-size: 0.9rem;
+            color: #cbd5f5;
+        }}
+        .filters label span {{
+            margin-bottom: 6px;
+            color: #94a3b8;
+            font-weight: 600;
+        }}
+        .filters select {{
+            background: #0f172a;
+            border: 1px solid #334155;
+            border-radius: 6px;
+            padding: 6px 10px;
+            color: #f8fafc;
+            min-width: 160px;
+        }}
+        .filters select:focus {{
+            outline: none;
+            border-color: #2563eb;
+            box-shadow: 0 0 0 1px #2563eb;
+        }}
         @media (max-width: 768px) {{
             .hero {{
                 flex-direction: column;
@@ -392,6 +658,12 @@ def render_dashboard(trades_path: Path, price_path: Path | None, html_out: Path,
             }}
             th, td {{
                 font-size: 0.85rem;
+            }}
+            .filters-grid {{
+                flex-direction: column;
+            }}
+            .filters select {{
+                width: 100%;
             }}
         }}
     </style>
@@ -408,8 +680,45 @@ def render_dashboard(trades_path: Path, price_path: Path | None, html_out: Path,
     <div class="plot-container">
         {fig_html}
     </div>
+    {filters_html}
     {ops_table_html}
     {trades_table_html}
+    <script>
+    (function() {{
+        const selects = document.querySelectorAll('select[data-filter-key]');
+        if (!selects.length) {{
+            return;
+        }}
+        const tables = document.querySelectorAll('table.filterable');
+
+        function applyFilters() {{
+            const active = {{}};
+            selects.forEach((sel) => {{
+                const value = sel.value;
+                if (value) {{
+                    active[sel.dataset.filterKey] = value;
+                }}
+            }});
+
+            tables.forEach((table) => {{
+                table.querySelectorAll('tbody tr').forEach((row) => {{
+                    let visible = true;
+                    for (const [key, value] of Object.entries(active)) {{
+                        const rowValue = (row.dataset[key] || '');
+                        if (rowValue !== value) {{
+                            visible = false;
+                            break;
+                        }}
+                    }}
+                    row.style.display = visible ? '' : 'none';
+                }});
+            }});
+        }}
+
+        selects.forEach((sel) => sel.addEventListener('change', applyFilters));
+        applyFilters();
+    }})();
+    </script>
 </body>
 </html>"""
 

@@ -1,0 +1,2 @@
+EntryTime,ExitTime,Direction,EntryPrice,ExitPrice,EntryReason,ExitReason,PnLAbs,PnLPct,Fees,Outcome
+2025-11-01T13:59:59.999000-03:00,2025-11-03T02:59:59.999000-03:00,short,3893.585555092853,3749.613171620536,bollinger_signal,bollinger_signal,140.15078410896055,0.035995301021610214,3.8215993633566945,win

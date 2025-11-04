@@ -10,6 +10,7 @@ from velas import (
     API_SYMBOL,
     STREAM_INTERVAL,
     BB_LENGTH,
+    BB_DIRECTION,
     BB_MULT,
     compute_bollinger_bands,
 )
@@ -22,6 +23,8 @@ BB_BASIS_COLOR = os.getenv("BB_BASIS_COLOR", "#facc15")
 BB_UPPER_COLOR = os.getenv("BB_UPPER_COLOR", "#1dac70")
 BB_LOWER_COLOR = os.getenv("BB_LOWER_COLOR", "#dc2626")
 BB_FILL_ALPHA = float(os.getenv("BB_FILL_ALPHA", "0.12"))
+BB_SIGNAL_MARKER_COLOR = os.getenv("BB_SIGNAL_MARKER_COLOR", "white")
+BB_SIGNAL_MARKER_SIZE = float(os.getenv("BB_SIGNAL_MARKER_SIZE", "80"))
 
 
 def _style_tv_dark():
@@ -54,6 +57,35 @@ def _has_data(s: pd.Series | None) -> bool:
         return np.isfinite(arr).any()
     except Exception:
         return False
+
+
+def _compute_signal_points(
+    ohlc: pd.DataFrame, upper: pd.Series | None, lower: pd.Series | None
+) -> pd.Series | None:
+    if ohlc is None or ohlc.empty or not _has_data(upper) or not _has_data(lower):
+        return None
+
+    close = pd.to_numeric(ohlc["Close"], errors="coerce").astype("float64")
+    upper_vals = pd.to_numeric(upper, errors="coerce").astype("float64")
+    lower_vals = pd.to_numeric(lower, errors="coerce").astype("float64")
+
+    close_prev = close.shift(1)
+    upper_prev = upper_vals.shift(1)
+    lower_prev = lower_vals.shift(1)
+
+    crossed_lower = (close_prev <= lower_prev) & (close > lower_vals)
+    crossed_upper = (close_prev >= upper_prev) & (close < upper_vals)
+
+    signals = pd.Series(np.nan, index=close.index, dtype="float64")
+
+    if BB_DIRECTION != -1:
+        long_mask = crossed_lower.fillna(False)
+        signals.loc[long_mask] = lower_vals.loc[long_mask]
+    if BB_DIRECTION != 1:
+        short_mask = crossed_upper.fillna(False)
+        signals.loc[short_mask] = upper_vals.loc[short_mask]
+
+    return signals if signals.notna().any() else None
 
 
 def main():
@@ -96,6 +128,18 @@ def main():
                     ),
                 )
             )
+
+    signal_points = _compute_signal_points(ohlc_stream, upper, lower)
+    if signal_points is not None:
+        addplots.append(
+            mpf.make_addplot(
+                signal_points,
+                type="scatter",
+                marker="o",
+                color=BB_SIGNAL_MARKER_COLOR,
+                markersize=BB_SIGNAL_MARKER_SIZE,
+            )
+        )
 
     mpf.plot(
         ohlc_stream,

@@ -26,6 +26,7 @@ TRADE_ALERTS_ENABLED = os.getenv("TRADE_ALERTS_ENABLED", "true").lower() == "tru
 
 TRADE_COLUMNS = [
     "EntryTime",
+    "OrderTime",
     "ExitTime",
     "Direction",
     "EntryPrice",
@@ -61,6 +62,16 @@ def _prepare_csv(path: Path):
     if not path.exists():
         path.parent.mkdir(parents=True, exist_ok=True)
         pd.DataFrame(columns=TRADE_COLUMNS).to_csv(path, index=False, encoding="utf-8")
+        return
+
+    try:
+        existing = pd.read_csv(path)
+    except Exception:
+        return
+
+    if any(col not in existing.columns for col in TRADE_COLUMNS):
+        upgraded = existing.reindex(columns=TRADE_COLUMNS, fill_value=np.nan)
+        upgraded.to_csv(path, index=False, encoding="utf-8")
 
 
 def _send_trade_notification(text: str):
@@ -85,6 +96,7 @@ def log_trade(
     entry_price: float,
     exit_price: float,
     entry_time: pd.Timestamp,
+    order_time: Any | None = None,
     exit_time: pd.Timestamp,
     entry_reason: str,
     exit_reason: str,
@@ -105,8 +117,19 @@ def log_trade(
     outcome = "win" if pnl_abs > 0 else ("loss" if pnl_abs < 0 else "flat")
     outcome_label = "GANANCIA" if outcome == "win" else ("PÉRDIDA" if outcome == "loss" else "RESULTADO NEUTRO")
 
+    order_time_obj = order_time or entry_time
+    if isinstance(order_time_obj, pd.Timestamp):
+        order_time_str = order_time_obj.isoformat()
+    elif hasattr(order_time_obj, "isoformat"):
+        order_time_str = order_time_obj.isoformat()
+    elif order_time_obj is None:
+        order_time_str = ""
+    else:
+        order_time_str = str(order_time_obj)
+
     data = {
         "EntryTime": entry_time.isoformat() if hasattr(entry_time, "isoformat") else str(entry_time),
+        "OrderTime": order_time_str,
         "ExitTime": exit_time.isoformat() if hasattr(exit_time, "isoformat") else str(exit_time),
         "Direction": direction,
         "EntryPrice": entry_price,
