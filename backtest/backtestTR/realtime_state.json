@@ -1,15 +1,15 @@
 {
   "status": "open",
   "direction": "long",
-  "entry_price": 3578.5273012488724,
-  "entry_time": "2025-11-03T20:53:59.999000+00:00",
+  "entry_price": 3343.6606579531763,
+  "entry_time": "2025-11-06T11:59:59.999000-03:00",
   "entry_reason": "bollinger_signal",
   "entry_meta": {
-    "basis": 3744.5015,
-    "reference_band": 3578.5273012488724,
-    "order_time": "2025-11-03T13:59:59.999000-03:00"
+    "basis": 3408.3315000000002,
+    "reference_band": 3343.6606579531763,
+    "order_time": "2025-11-06T10:59:59.999000-03:00"
   },
   "last_signal_direction": "long",
-  "stop_price": 3381.708299680184,
-  "take_price": 3918.4873948675154
+  "stop_price": 3159.7593217657513,
+  "take_price": 3661.308420458728
 }

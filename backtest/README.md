@@ -112,8 +112,78 @@ También podés lanzar el listener de comandos para responder manualmente en cua
 python telegram_bot_commands.py
 ```
 
-- Reconoce `/start`, `/help` y `/estavivo`. Este último genera el reporte instantáneo usando la lista de procesos definida en `HEARTBEAT_PROCESSES`.
+- Reconoce `/start`, `/help`, `/estavivo`, `/ultimaalerta`, `/ultimatrade` y `/resumen`. Los tres últimos permiten consultar rápidamente la última señal, el último trade y un resumen de métricas del CSV configurado.
 - El comando responde únicamente a los chats listados en `TELEGRAM_CHAT_IDS` (si está vacío, acepta a todos).
+
+## Trading en exchanges (estructura preliminar)
+
+El paquete `trading/` incorpora la base para ejecutar órdenes reales o simuladas, contemplando múltiples exchanges y usuarios:
+
+- `trading/orders/models.py`: definiciones comunes (`OrderRequest`, `OrderResponse`, enums `OrderSide/OrderType/TimeInForce`).
+- `trading/accounts/models.py`: descripciones de cuentas (`AccountConfig`, `ExchangeCredential`, ambientes testnet/live).
+- `trading/accounts/manager.py`: carga configuraciones desde YAML/JSON y resuelve credenciales leyendo variables de entorno.
+- `trading/exchanges/base.py`: interfaz `ExchangeClient` + `ExchangeRegistry` para registrar implementaciones por exchange.
+- `trading/exchanges/binance.py`: cliente Binance en modo dry-run/testnet (no envía órdenes reales todavía).
+- `trading/orders/executor.py`: orquestador que toma una señal genérica y la envía al exchange adecuado.
+
+### Archivo de cuentas
+
+Ejemplo (`trading/accounts/sample_accounts.yaml`):
+
+```yaml
+users:
+  - id: diego
+    label: Cuenta Diego
+    exchanges:
+      binance:
+        api_key_env: DIEGO_BINANCE_API_KEY
+        api_secret_env: DIEGO_BINANCE_API_SECRET
+        environment: testnet
+  - id: sofia
+    label: Cuenta Sofia
+    exchanges:
+      binance:
+        api_key_env: SOFIA_BINANCE_API_KEY
+        api_secret_env: SOFIA_BINANCE_API_SECRET
+        environment: live
+```
+
+Las variables de entorno `DIEGO_BINANCE_API_KEY`, etc., deben estar configuradas en el server (idealmente gestionadas como secretos).
+
+### Uso básico en modo dry-run
+
+```python
+from trading.accounts.manager import AccountManager
+from trading.orders.executor import OrderExecutor
+from trading.orders.models import OrderRequest, OrderSide, OrderType
+
+manager = AccountManager.from_file("accounts.yaml")
+executor = OrderExecutor(manager)
+
+order = OrderRequest(
+    symbol="ETHUSDT",
+    side=OrderSide.BUY,
+    type=OrderType.MARKET,
+    quantity=0.1,
+)
+
+response = executor.execute("diego", "binance", order, dry_run=True)
+print(response.status, response.raw)
+```
+
+Mientras `dry_run=True` (o la cuenta esté marcada como `testnet`), no se envía la orden a Binance; se devuelve una respuesta simulada. Más adelante se agregará la llamada real a la API, controles de riesgo y manejo de posiciones.
+
+### Configuración de cuentas y secretos
+
+- Cada usuario/exchange hace referencia a variables de entorno (`api_key_env`, `api_secret_env`). En OCI podés declararlas en tu profile, usar un secret manager o exportarlas en el servicio (ej. `export DIEGO_BINANCE_API_KEY=...`).
+- Validá rápidamente que todas las cuentas tengan sus claves disponibles:
+
+  ```bash
+  python scripts/validate_accounts.py --accounts trading/accounts/sample_accounts.yaml --verbose
+  ```
+
+  El script reporta las variables faltantes para que puedas cargarlas antes de habilitar la ejecución real.
+- Recordá excluir `accounts.yaml` y `.env` con datos sensibles de tu repo público; mantenelos en el server (o en Vault) y solo referencialos desde las variables de entorno.
 
 ## Consejos y buenas prácticas
 
