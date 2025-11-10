@@ -15,6 +15,11 @@ STREAM_INTERVAL = os.getenv("STREAM_INTERVAL", "30m").strip()
 BB_LENGTH = int(os.getenv("BB_LENGTH", "20"))
 BB_MULT = float(os.getenv("BB_MULT", "2.0"))
 BB_DIRECTION = int(os.getenv("BB_DIRECTION", "0"))
+try:
+    BB_STD_DDOF = int(os.getenv("BB_STD_DDOF", "1"))
+except ValueError:
+    BB_STD_DDOF = 1
+BB_STD_DDOF = max(BB_STD_DDOF, 0)
 
 
 def fetch_stream_ohlc(limit: int) -> pd.DataFrame:
@@ -34,7 +39,7 @@ def compute_bollinger_bands(df: pd.DataFrame, length: int, mult: float) -> pd.Da
 
     close = df["Close"].astype("float64")
     basis = close.rolling(length, min_periods=1).mean()
-    deviation = close.rolling(length, min_periods=1).std(ddof=0)
+    deviation = close.rolling(length, min_periods=1).std(ddof=BB_STD_DDOF)
     upper = basis + mult * deviation
     lower = basis - mult * deviation
 
