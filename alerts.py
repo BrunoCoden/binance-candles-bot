@@ -23,6 +23,7 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 _chat_ids_raw = os.getenv("TELEGRAM_CHAT_IDS", "")
 TELEGRAM_CHAT_IDS = [part.strip() for part in _chat_ids_raw.replace(";", ",").split(",") if part.strip()]
 SIGNAL_ALERTS_ENABLED = os.getenv("ALERT_ENABLE_BOLLINGER_SIGNALS", "false").lower() == "true"
+_last_direction: str | None = None
 
 LOCAL_TZ_NAME = os.getenv("TZ", "UTC")
 try:
@@ -77,8 +78,11 @@ def _bollinger_alert(bb_aligned: pd.DataFrame, ohlc_stream: pd.DataFrame):
     if any(np.isnan(val) for val in (close_now, close_prev, upper_now, upper_prev, lower_now, lower_prev)):
         return None
 
-    crossed_lower = close_prev <= lower_prev and close_now > lower_now
-    crossed_upper = close_prev >= upper_prev and close_now < upper_now
+    # Reproduce TradingView Bollinger strategy behaviour:
+    #   - Señal long cuando el cierre cruza por debajo de la banda inferior.
+    #   - Señal short cuando el cierre cruza por encima de la banda superior.
+    crossed_lower = close_prev >= lower_prev and close_now < lower_now
+    crossed_upper = close_prev <= upper_prev and close_now > upper_now
 
     direction_filter = BB_DIRECTION
 
@@ -118,6 +122,7 @@ def _bollinger_alert(bb_aligned: pd.DataFrame, ohlc_stream: pd.DataFrame):
 
 
 def generate_alerts() -> list[dict]:
+    global _LAST_DIRECTION
     frames = _prepare_frames()
     if not frames:
         return []
@@ -136,6 +141,10 @@ def generate_alerts() -> list[dict]:
             process_realtime_signal(alert, profile="tr")
         except Exception as exc:
             print(f"[ALERT][WARN] No se pudo actualizar el backtest en tiempo real ({exc})")
+        direction = (alert.get("direction") or "").lower()
+        if direction and direction == (_LAST_DIRECTION or "").lower():
+            return []
+        _LAST_DIRECTION = direction
         return [alert]
     return []
 

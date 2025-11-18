@@ -73,8 +73,8 @@ def _compute_signal_points(
     upper_prev = upper_vals.shift(1)
     lower_prev = lower_vals.shift(1)
 
-    crossed_lower = (close_prev <= lower_prev) & (close > lower_vals)
-    crossed_upper = (close_prev >= upper_prev) & (close < upper_vals)
+    crossed_lower = (close_prev >= lower_prev) & (close < lower_vals)
+    crossed_upper = (close_prev <= upper_prev) & (close > upper_vals)
 
     signals = pd.Series(np.nan, index=close.index, dtype="float64")
 
