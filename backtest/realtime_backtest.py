@@ -32,7 +32,7 @@ from paginado_binance import fetch_klines_paginado, INTERVAL_MS
 BACKTEST_REALTIME_ENABLED = os.getenv("BACKTEST_REALTIME_ENABLED", "true").lower() == "true"
 REALTIME_PROFILE = os.getenv("BACKTEST_REALTIME_PROFILE", "tr").lower()
 STATE_PATH_ENV = os.getenv("BACKTEST_REALTIME_STATE_PATH", "")
-STOP_LOSS_PCT = float(os.getenv("STRAT_STOP_LOSS_PCT", "0.055"))
+STOP_LOSS_PCT = float(os.getenv("STRAT_STOP_LOSS_PCT", "0.05"))
 TAKE_PROFIT_PCT = float(os.getenv("STRAT_TAKE_PROFIT_PCT", "0.095"))
 
 PricePath = Path(os.getenv("ALERTS_TABLE_CSV_PATH", "alerts_stream.csv"))

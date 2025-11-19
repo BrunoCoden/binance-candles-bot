@@ -35,7 +35,7 @@ from trade_logger import log_trade, TRADE_COLUMNS
 BACKTEST_STREAM_BARS = int(os.getenv("BACKTEST_STREAM_BARS", "5000"))
 BACKTEST_CHANNEL_BARS = int(os.getenv("BACKTEST_CHANNEL_BARS", "5000"))  # legacy env, sin uso
 SHOW_PLOT = os.getenv("BACKTEST_PLOT_SHOW", "false").lower() == "true"
-STOP_LOSS_PCT = float(os.getenv("STRAT_STOP_LOSS_PCT", "0.055"))
+STOP_LOSS_PCT = float(os.getenv("STRAT_STOP_LOSS_PCT", "0.05"))
 TAKE_PROFIT_PCT = float(os.getenv("STRAT_TAKE_PROFIT_PCT", "0.095"))
 
 COLUMN_ORDER = TRADE_COLUMNS
