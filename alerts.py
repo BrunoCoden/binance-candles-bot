@@ -78,11 +78,11 @@ def _bollinger_alert(bb_aligned: pd.DataFrame, ohlc_stream: pd.DataFrame):
     if any(np.isnan(val) for val in (close_now, close_prev, upper_now, upper_prev, lower_now, lower_prev)):
         return None
 
-    # Reproduce TradingView Bollinger strategy behaviour:
-    #   - Señal long cuando el cierre cruza por debajo de la banda inferior.
-    #   - Señal short cuando el cierre cruza por encima de la banda superior.
-    crossed_lower = close_prev >= lower_prev and close_now < lower_now
-    crossed_upper = close_prev <= upper_prev and close_now > upper_now
+    # Condiciones idénticas al Pine oficial:
+    #   - Long cuando el cierre cruza por encima de la banda inferior.
+    #   - Short cuando el cierre cruza por debajo de la banda superior.
+    crossed_lower = close_prev < lower_prev and close_now > lower_now
+    crossed_upper = close_prev > upper_prev and close_now < upper_now
 
     direction_filter = BB_DIRECTION
 
@@ -104,9 +104,15 @@ def _bollinger_alert(bb_aligned: pd.DataFrame, ohlc_stream: pd.DataFrame):
     volume = float(last_bar.get("Volume", np.nan))
     basis_now = float(basis.iloc[-1]) if basis is not None else np.nan
 
+    timestamp = bar_close_ts if isinstance(bar_close_ts, pd.Timestamp) else pd.Timestamp(bar_close_ts)
+    try:
+        interval_delta = pd.to_timedelta(STREAM_INTERVAL)
+    except (ValueError, TypeError):
+        interval_delta = None
+
     return {
         "type": "bollinger_signal",
-        "timestamp": bar_close_ts if isinstance(bar_close_ts, pd.Timestamp) else last_idx,
+        "timestamp": (timestamp - interval_delta) if interval_delta is not None else timestamp,
         "message": (
             f"{SYMBOL_DISPLAY} {STREAM_INTERVAL}: Señal Bollinger {trend} en {trigger_price:.2f} "
             f"(banda de referencia {ref_price:.2f})"
@@ -122,7 +128,6 @@ def _bollinger_alert(bb_aligned: pd.DataFrame, ohlc_stream: pd.DataFrame):
 
 
 def generate_alerts() -> list[dict]:
-    global _LAST_DIRECTION
     frames = _prepare_frames()
     if not frames:
         return []
@@ -141,10 +146,6 @@ def generate_alerts() -> list[dict]:
             process_realtime_signal(alert, profile="tr")
         except Exception as exc:
             print(f"[ALERT][WARN] No se pudo actualizar el backtest en tiempo real ({exc})")
-        direction = (alert.get("direction") or "").lower()
-        if direction and direction == (_LAST_DIRECTION or "").lower():
-            return []
-        _LAST_DIRECTION = direction
         return [alert]
     return []
 

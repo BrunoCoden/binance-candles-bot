@@ -39,6 +39,24 @@ TRADE_COLUMNS = [
     "Outcome",
 ]
 
+TRADE_TABLE_COLUMNS = [
+    "EntryTime",
+    "Direction",
+    "ReferencePrice",
+    "Fees",
+    "PnLPct",
+    "PnLAbs",
+    "Source",
+]
+
+TRADE_LOG_SOURCE = (os.getenv("TRADE_LOG_SOURCE", "live") or "live").strip()
+if not TRADE_LOG_SOURCE:
+    TRADE_LOG_SOURCE = "live"
+base_dashboard_dir = os.getenv("TRADES_DASHBOARD_BASE", "trades_dashboard").strip() or "trades_dashboard"
+DEFAULT_TRADES_DASHBOARD_DIR = Path(base_dashboard_dir) / TRADE_LOG_SOURCE
+TRADE_TABLE_CSV_PATH = Path(os.getenv("TRADE_TABLE_CSV_PATH", DEFAULT_TRADES_DASHBOARD_DIR / "trades_table.csv"))
+TRADE_DASHBOARD_HTML_PATH = Path(os.getenv("TRADE_DASHBOARD_HTML_PATH", DEFAULT_TRADES_DASHBOARD_DIR / "trades_dashboard.html"))
+
 
 def format_timestamp(ts: Any) -> str:
     try:
@@ -72,6 +90,80 @@ def _prepare_csv(path: Path):
     if any(col not in existing.columns for col in TRADE_COLUMNS):
         upgraded = existing.reindex(columns=TRADE_COLUMNS, fill_value=np.nan)
         upgraded.to_csv(path, index=False, encoding="utf-8")
+
+
+def _ensure_trade_table():
+    TRADE_TABLE_CSV_PATH.parent.mkdir(parents=True, exist_ok=True)
+    if not TRADE_TABLE_CSV_PATH.exists():
+        pd.DataFrame(columns=TRADE_TABLE_COLUMNS).to_csv(TRADE_TABLE_CSV_PATH, index=False, encoding="utf-8")
+
+
+def _append_trade_table(entry_time: str, direction: str, entry_price: float, fees: float, pnl_abs: float, pnl_pct: float, *, source: str):
+    try:
+        _ensure_trade_table()
+        pd.DataFrame(
+            [{
+                "EntryTime": entry_time,
+                "Direction": direction,
+                "ReferencePrice": entry_price,
+                "Fees": fees,
+                "PnLPct": pnl_pct,
+                "PnLAbs": pnl_abs,
+                "Source": source,
+            }]
+        ).to_csv(TRADE_TABLE_CSV_PATH, mode="a", header=False, index=False, encoding="utf-8")
+    except Exception as exc:
+        print(f"[TRADE][WARN] No se pudo actualizar trades_table.csv ({exc})")
+
+
+def _render_trade_dashboard():
+    try:
+        if not TRADE_TABLE_CSV_PATH.exists():
+            TRADE_DASHBOARD_HTML_PATH.parent.mkdir(parents=True, exist_ok=True)
+            TRADE_DASHBOARD_HTML_PATH.write_text("<html><body><h2>Sin operaciones registradas</h2></body></html>", encoding="utf-8")
+            return
+        df = pd.read_csv(TRADE_TABLE_CSV_PATH)
+        total = len(df)
+        wins = int((df["PnLAbs"] > 0).sum())
+        losses = int((df["PnLAbs"] < 0).sum())
+        win_rate = (wins / total * 100) if total else 0.0
+        avg_pct = df["PnLPct"].mean() * 100 if total else 0.0
+        pnl_total = df["PnLAbs"].sum()
+        summary_html = (
+            "<table>"
+            f"<tr><th>Total trades</th><td>{total}</td></tr>"
+            f"<tr><th>Ganadores</th><td>{wins}</td></tr>"
+            f"<tr><th>Perdedores</th><td>{losses}</td></tr>"
+            f"<tr><th>Win rate</th><td>{win_rate:.2f}%</td></tr>"
+            f"<tr><th>PnL promedio</th><td>{avg_pct:.2f}%</td></tr>"
+            f"<tr><th>PnL total</th><td>{pnl_total:.2f}</td></tr>"
+            "</table>"
+        )
+        table_html = df.to_html(index=False, classes="trade-table", float_format=lambda x: f"{x:.4f}" if isinstance(x, float) else x)
+        html = f"""
+        <html>
+        <head>
+            <meta charset="utf-8" />
+            <title>Trade Dashboard</title>
+            <style>
+                body {{ font-family: Arial, sans-serif; margin: 2rem; background: #111; color: #f5f5f5; }}
+                h1 {{ color: #facc15; }}
+                table {{ border-collapse: collapse; width: 100%; margin-top: 1rem; }}
+                th, td {{ border: 1px solid #333; padding: 0.5rem; text-align: left; }}
+                th {{ background: #222; }}
+                tr:nth-child(even) {{ background: #1a1a1a; }}
+            </style>
+        </head>
+        <body>
+            <h1>Registro de trades</h1>
+            {summary_html}
+            {table_html}
+        </body>
+        </html>
+        """
+        TRADE_DASHBOARD_HTML_PATH.write_text(html, encoding="utf-8")
+    except Exception as exc:
+        print(f"[TRADE][WARN] No se pudo generar dashboard de trades ({exc})")
 
 
 def _send_trade_notification(text: str):
@@ -148,6 +240,19 @@ def log_trade(
         f"[TRADE] {SYMBOL_DISPLAY} {STREAM_INTERVAL} | {direction.upper()} {entry_reason} → {exit_reason} | "
         f"Entry {entry_price:.2f} Exit {exit_price:.2f} | Fees {fees:.2f} | PnL {pnl_abs:.2f} ({pnl_pct*100:.2f}%)"
     )
+    try:
+        _append_trade_table(
+            entry_time=data["EntryTime"],
+            direction=direction,
+            entry_price=entry_price,
+            fees=fees,
+            pnl_abs=pnl_abs,
+            pnl_pct=pnl_pct,
+            source=TRADE_LOG_SOURCE,
+        )
+        _render_trade_dashboard()
+    except Exception as exc:
+        print(f"[TRADE][WARN] No se pudo actualizar el tablero de trades ({exc})")
     print(message)
     if notify:
         try:
