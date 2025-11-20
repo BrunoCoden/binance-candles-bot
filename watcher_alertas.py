@@ -8,7 +8,7 @@ from trade_logger import send_trade_notification, format_timestamp
 from velas import SYMBOL_DISPLAY, STREAM_INTERVAL
 from trading.accounts.manager import AccountManager
 from trading.orders.executor import OrderExecutor
-from trading.orders.models import OrderRequest, OrderSide, OrderType
+from trading.orders.models import OrderRequest, OrderSide, OrderType, TimeInForce
 
 TRADING_ENABLED = os.getenv("WATCHER_ENABLE_TRADING", "false").lower() == "true"
 TRADING_ACCOUNTS_FILE = os.getenv("WATCHER_ACCOUNTS_FILE", "trading/accounts/sample_accounts.yaml")
@@ -19,6 +19,7 @@ TRADING_DRY_RUN = os.getenv("WATCHER_TRADING_DRY_RUN", "true").lower() != "false
 TRADING_MIN_PRICE = float(os.getenv("WATCHER_TRADING_MIN_PRICE", "0"))
 
 _executor: OrderExecutor | None = None
+_last_order_direction: str | None = None
 
 
 def _resolve_executor() -> OrderExecutor | None:
@@ -78,6 +79,7 @@ def _price_from_event(event: dict) -> float | None:
 
 
 def _submit_trade(event: dict) -> None:
+    global _last_order_direction
     executor = _resolve_executor()
     if executor is None:
         return
@@ -86,6 +88,11 @@ def _submit_trade(event: dict) -> None:
     except Exception as exc:
         print(f"[WATCHER][WARN] No se pudo determinar dirección para trading: {exc}")
         return
+    direction = (event.get("direction") or "").lower()
+    if direction and direction == (_last_order_direction or "").lower():
+        print(f"[WATCHER][INFO] Orden {direction} ya colocada; se ignora nueva señal.")
+        return
+
     price = _price_from_event(event)
     if price is None or price <= 0:
         print("[WATCHER][WARN] Evento sin precio de referencia, se omite trading.")
@@ -101,8 +108,10 @@ def _submit_trade(event: dict) -> None:
     order = OrderRequest(
         symbol=event.get("symbol") or SYMBOL_DISPLAY.replace(".P", ""),
         side=side,
-        type=OrderType.MARKET,
+        type=OrderType.LIMIT,
         quantity=quantity,
+        price=price,
+        time_in_force=TimeInForce.GTC,
         extra_params={
             "source_event": event.get("type", "unknown"),
             "event_timestamp": str(event.get("timestamp")),
@@ -111,6 +120,8 @@ def _submit_trade(event: dict) -> None:
     try:
         response = executor.execute(TRADING_USER_ID, TRADING_EXCHANGE, order, dry_run=TRADING_DRY_RUN)
         print(f"[WATCHER][TRADE] Resultado orden: success={response.success} status={response.status} raw={response.raw}")
+        if response.success:
+            _last_order_direction = direction
     except Exception as exc:
         print(f"[WATCHER][ERROR] Falló la ejecución de orden ({exc})")
 
