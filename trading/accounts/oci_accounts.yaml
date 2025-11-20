@@ -1,9 +1,8 @@
 users:
   - id: diego
-    description: "OCI test account"
+    label: "OCI test account"
     exchanges:
-      - name: binance
-        api_key: "ZCbxSYGalKHxPEtHm2XK8U614vz1jC8kH6v83LWaRp7QOVobBkCOAXbWO6hyjDwX"
-        secret_key: "v0yJiLUdfITmwjVG7bmUIZI3ZfvYAmSJ2AXv8OMZ5e3b0wWF31V0JBaLl4b2O9B4"
-        paper: true         # mantiene modo simulado
-        testnet: true       # usar Binance testnet; pon en false si vas a live
+      binance:
+        api_key_env: DIEGO_BINANCE_API_KEY
+        api_secret_env: DIEGO_BINANCE_API_SECRET
+        environment: testnet    # cámbialo a "live" si vas a producción

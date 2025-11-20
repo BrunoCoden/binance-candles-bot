@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from typing import Dict
+import os
+from typing import Dict, Optional
+
+from binance.um_futures import UMFutures
 
 from .base import ExchangeClient, ExchangeRegistry
 from ..accounts.models import AccountConfig, ExchangeCredential, ExchangeEnvironment
@@ -12,6 +15,28 @@ logger = get_logger("trading.exchanges.binance")
 
 class BinanceClient(ExchangeClient):
     name = "binance"
+
+    def _build_client(self, credential: ExchangeCredential) -> UMFutures:
+        api_key, api_secret = credential.resolve_keys(os.environ)
+        base_url = "https://testnet.binancefuture.com" if credential.environment == ExchangeEnvironment.TESTNET else None
+        if base_url:
+            return UMFutures(key=api_key, secret=api_secret, base_url=base_url)
+        return UMFutures(key=api_key, secret=api_secret)
+
+    @staticmethod
+    def _format_order_params(order: OrderRequest) -> Dict[str, Optional[str]]:
+        params: Dict[str, Optional[str]] = {
+            "symbol": order.symbol,
+            "side": order.side.value,
+            "type": order.type.value,
+            "quantity": str(order.quantity),
+            "reduceOnly": "true" if order.reduce_only else "false",
+        }
+        if order.time_in_force:
+            params["timeInForce"] = order.time_in_force.value
+        if order.price:
+            params["price"] = f"{order.price:.8f}"
+        return params
 
     def place_order(
         self,
@@ -35,8 +60,7 @@ class BinanceClient(ExchangeClient):
             order.price,
         )
 
-        if dry_run or credential.environment == ExchangeEnvironment.TESTNET:
-            # Simulación: no se llama a la API, solo se devuelve una respuesta mock
+        if dry_run:
             return OrderResponse(
                 success=True,
                 status="SIMULATED",
@@ -55,11 +79,25 @@ class BinanceClient(ExchangeClient):
                 },
             )
 
-        # Placeholder para implementación futura (orden real)
-        logger.warning(
-            "La ejecución real todavía no está implementada. Configurá dry_run=True o usa testnet."
-        )
-        return OrderResponse(success=False, status="UNSUPPORTED", error="Live trading not implemented")
+        try:
+            client = self._build_client(credential)
+            params = self._format_order_params(order)
+            response = client.new_order(**params)
+            status = response.get("status") or "NEW"
+            order_id = str(response.get("orderId") or "")
+            filled_qty = float(response.get("executedQty") or 0.0)
+            avg_price = float(response.get("avgPrice") or order.price or 0.0)
+            return OrderResponse(
+                success=True,
+                status=status,
+                exchange_order_id=order_id,
+                filled_quantity=filled_qty,
+                avg_price=avg_price,
+                raw=response,
+            )
+        except Exception as exc:
+            logger.exception("Error enviando orden a Binance: %s", exc)
+            return OrderResponse(success=False, status="ERROR", error=str(exc))
 
     def cancel_order(
         self,
