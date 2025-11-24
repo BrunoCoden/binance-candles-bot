@@ -19,6 +19,8 @@ from velas import (
 
 
 ALERT_STREAM_BARS = int(os.getenv("ALERT_STREAM_BARS", "5000"))
+STOP_LOSS_PCT = float(os.getenv("STRAT_STOP_LOSS_PCT", "0.05"))
+TAKE_PROFIT_PCT = float(os.getenv("STRAT_TAKE_PROFIT_PCT", "0.095"))
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 _chat_ids_raw = os.getenv("TELEGRAM_CHAT_IDS", "")
 TELEGRAM_CHAT_IDS = [part.strip() for part in _chat_ids_raw.replace(";", ",").split(",") if part.strip()]
@@ -99,6 +101,14 @@ def _bollinger_alert(bb_aligned: pd.DataFrame, ohlc_stream: pd.DataFrame):
     else:
         return None
 
+    stop_loss = None
+    take_profit = None
+    if ref_price and ref_price > 0:
+        if STOP_LOSS_PCT > 0:
+            stop_loss = ref_price * (1 - STOP_LOSS_PCT) if direction == "long" else ref_price * (1 + STOP_LOSS_PCT)
+        if TAKE_PROFIT_PCT > 0:
+            take_profit = ref_price * (1 + TAKE_PROFIT_PCT) if direction == "long" else ref_price * (1 - TAKE_PROFIT_PCT)
+
     last_bar = ohlc_stream.iloc[-1]
     bar_close_ts = last_bar.get("BarCloseTime", last_idx)
     volume = float(last_bar.get("Volume", np.nan))
@@ -123,6 +133,8 @@ def _bollinger_alert(bb_aligned: pd.DataFrame, ohlc_stream: pd.DataFrame):
         "basis": basis_now,
         "reference_band": ref_price,
         "volume": volume,
+        "stop_loss": stop_loss,
+        "take_profit": take_profit,
     }
 
 
@@ -173,7 +185,23 @@ def format_alert_message(alert: dict) -> str:
     else:
         ts_str = str(ts)
 
-    return f"{ts_str}\n{alert.get('message', '')}"
+    base = f"{ts_str}\n{alert.get('message', '')}"
+
+    sl = alert.get("stop_loss")
+    tp = alert.get("take_profit")
+    parts = []
+    try:
+        if tp is not None:
+            parts.append(f"TP: {float(tp):.2f}")
+        if sl is not None:
+            parts.append(f"SL: {float(sl):.2f}")
+    except Exception:
+        pass
+
+    if parts:
+        base = f"{base}\n" + " | ".join(parts)
+
+    return base
 
 
 def send_alerts(alerts: list[dict]) -> int:

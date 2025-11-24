@@ -198,6 +198,9 @@ def main():
 
         if new_alerts:
             send_alerts(new_alerts)
+            if TRADING_ENABLED:
+                for evt in new_alerts:
+                    _submit_trade(evt)
 
         time.sleep(POLL_SECONDS)
 

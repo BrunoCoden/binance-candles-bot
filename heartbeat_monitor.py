@@ -147,7 +147,7 @@ def main() -> None:
     parser.add_argument(
         "--interval-hours",
         type=float,
-        default=float(os.getenv("HEARTBEAT_INTERVAL_HOURS", "3")),
+        default=float(os.getenv("HEARTBEAT_INTERVAL_HOURS", "12")),
         help="Intervalo entre notificaciones (en horas).",
     )
     parser.add_argument(

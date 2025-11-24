@@ -297,8 +297,9 @@ def run_backtest(
         raise RuntimeError("El rango temporal seleccionado devolvió menos de 2 velas; no se puede ejecutar el backtest.")
     trades = []
     position = None
-    pending_order = None
-    last_signal_direction = None
+    pending_entry = None  # orden de entrada límite
+    pending_exit = None   # orden de salida límite (cierre por señal opuesta)
+    deferred_entry = None # entrada opuesta a ejecutar tras el cierre
 
     for i in range(1, len(ohlc)):
         ts_open = ohlc.index[i]
@@ -311,6 +312,7 @@ def run_backtest(
             else ts_open
         )
 
+        # 1) Riesgo (SL / TP). Si se dispara, se cancela todo lo pendiente.
         if position:
             risk_exit = _check_risk_exit(position, bar_high, bar_low)
             if risk_exit:
@@ -322,16 +324,37 @@ def run_backtest(
                 }
                 trades.append(_finalize_trade(position, float(exit_price), ts_close, exit_reason, fee_rate))
                 position = None
+                pending_exit = None
+                deferred_entry = None
 
-        if pending_order and position is None:
-            entry_price = float(pending_order["entry_price"])
-            direction = pending_order["direction"]
-            filled = False
-            if direction == "long" and bar_low <= entry_price:
-                filled = True
-            elif direction == "short" and bar_high >= entry_price:
-                filled = True
+        # 2) Salida límite (banda opuesta) antes de procesar nuevas señales.
+        if position and pending_exit:
+            exit_price = float(pending_exit["price"])
+            direction = position["direction"]
+            filled = (direction == "long" and bar_high >= exit_price) or (
+                direction == "short" and bar_low <= exit_price
+            )
+            if filled:
+                position["exit_meta"] = {
+                    "basis": position.get("entry_meta", {}).get("basis"),
+                    "reference_band": pending_exit.get("reference_band"),
+                    "stop_price": position.get("stop_price"),
+                    "take_price": position.get("take_price"),
+                }
+                trades.append(_finalize_trade(position, exit_price, ts_close, pending_exit["reason"], fee_rate))
+                position = None
+                pending_exit = None
+                if deferred_entry:
+                    pending_entry = deferred_entry
+                    deferred_entry = None
 
+        # 3) Entrada límite pendiente si no hay posición
+        if pending_entry and position is None:
+            entry_price = float(pending_entry["entry_price"])
+            direction = pending_entry["direction"]
+            filled = (direction == "long" and bar_low <= entry_price) or (
+                direction == "short" and bar_high >= entry_price
+            )
             if filled:
                 entry_ts = ts_close if isinstance(ts_close, pd.Timestamp) else ts_open
                 entry_time = pd.Timestamp(entry_ts)
@@ -339,10 +362,10 @@ def run_backtest(
                     "direction": direction,
                     "entry_price": entry_price,
                     "entry_time": entry_time,
-                    "entry_reason": pending_order["entry_reason"],
+                    "entry_reason": pending_entry["entry_reason"],
                     "entry_meta": {
-                        **pending_order.get("entry_meta", {}),
-                        "order_time": pending_order.get("order_time"),
+                        **pending_entry.get("entry_meta", {}),
+                        "order_time": pending_entry.get("order_time"),
                     },
                 }
                 stop_price, take_price = _compute_risk_levels(direction, entry_price)
@@ -350,7 +373,7 @@ def run_backtest(
                     position["stop_price"] = float(stop_price)
                 if take_price is not None:
                     position["take_price"] = float(take_price)
-                pending_order = None
+                pending_entry = None
 
         signals = _generate_signal(i, ohlc, bb)
         if not signals:
@@ -359,13 +382,6 @@ def run_backtest(
         for signal in signals:
             direction = signal["direction"]
 
-            if position and position["direction"] == direction:
-                continue
-            if pending_order and pending_order.get("direction") == direction:
-                continue
-            if last_signal_direction == direction:
-                continue
-
             reference = signal.get("reference_band")
             price_base = reference if reference is not None else signal.get("price", bar_close)
             signal_price = float(price_base)
@@ -373,23 +389,30 @@ def run_backtest(
 
             basis_now = signal.get("basis")
 
+            # Si ya hay una posición y la señal es opuesta, programar salida y diferir la entrada opuesta.
             if position:
-                exit_price = float(reference) if reference is not None else signal_price
-                position["exit_meta"] = {
-                    "basis": basis_now,
+                if position["direction"] == direction:
+                    continue
+                pending_exit = {
+                    "price": signal_price,
+                    "reason": signal["type"],
                     "reference_band": reference,
-                    "stop_price": position.get("stop_price"),
-                    "take_price": position.get("take_price"),
                 }
-                trades.append(_finalize_trade(position, exit_price, signal_ts, signal["type"], fee_rate))
-                position = None
+                deferred_entry = {
+                    "direction": direction,
+                    "entry_price": signal_price,
+                    "entry_reason": signal["type"],
+                    "order_time": signal_ts,
+                    "entry_meta": {
+                        "basis": basis_now,
+                        "reference_band": reference,
+                    },
+                }
+                continue
 
+            # Si no hay posición, crear/actualizar la orden de entrada límite.
             entry_price = float(reference) if reference is not None else signal_price
-
-            if pending_order and pending_order.get("direction") != direction:
-                pending_order = None
-
-            pending_order = {
+            pending_entry = {
                 "direction": direction,
                 "entry_price": entry_price,
                 "order_time": signal_ts,
@@ -399,7 +422,6 @@ def run_backtest(
                     "reference_band": reference,
                 },
             }
-            last_signal_direction = direction
 
     if position:
         fallback_exit = position["entry_price"]
@@ -414,8 +436,8 @@ def run_backtest(
             else ohlc.index[-1]
         )
         trades.append(_finalize_trade(position, float(fallback_exit), final_ts, "end_of_data", fee_rate))
-    if pending_order:
-        pending_order = None
+    if pending_entry:
+        pending_entry = None
 
     trades_path = Path(trades_path)
     plot_path = Path(plot_path)
