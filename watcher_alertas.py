@@ -15,6 +15,8 @@ TRADING_ACCOUNTS_FILE = os.getenv("WATCHER_ACCOUNTS_FILE", "trading/accounts/sam
 TRADING_USER_ID = os.getenv("WATCHER_TRADING_USER", "default")
 TRADING_EXCHANGE = os.getenv("WATCHER_TRADING_EXCHANGE", "binance")
 TRADING_DEFAULT_QTY = os.getenv("WATCHER_TRADING_DEFAULT_QTY", "0.01")
+# Si se indica, calcula cantidad a partir de un notional USDT (qty = notional / price)
+TRADING_DEFAULT_NOTIONAL_USDT = float(os.getenv("WATCHER_TRADING_NOTIONAL_USDT", "0") or 0)
 TRADING_DRY_RUN = os.getenv("WATCHER_TRADING_DRY_RUN", "true").lower() != "false"
 TRADING_MIN_PRICE = float(os.getenv("WATCHER_TRADING_MIN_PRICE", "0"))
 
@@ -49,10 +51,26 @@ def _direction_to_side(direction: str | None) -> OrderSide:
 
 
 def _resolve_quantity(event: dict) -> float:
-    qty_raw = event.get("quantity") or TRADING_DEFAULT_QTY
-    qty = float(str(qty_raw).replace(",", "."))
+    price = _price_from_event(event)
+    # Prioridad: cantidad explícita en evento -> notional USDT -> qty por defecto
+    qty_raw = event.get("quantity")
+    if qty_raw:
+        qty = float(str(qty_raw).replace(",", "."))
+        if qty <= 0:
+            raise ValueError("quantity debe ser > 0")
+        return qty
+
+    if TRADING_DEFAULT_NOTIONAL_USDT > 0:
+        if price is None or price <= 0:
+            raise ValueError("No se puede calcular qty desde notional: precio ausente/ inválido.")
+        qty = TRADING_DEFAULT_NOTIONAL_USDT / float(price)
+        if qty <= 0:
+            raise ValueError("quantity calculada debe ser > 0")
+        return qty
+
+    qty = float(str(TRADING_DEFAULT_QTY).replace(",", "."))
     if qty <= 0:
-        raise ValueError("quantity debe ser > 0")
+        raise ValueError("quantity por defecto debe ser > 0")
     return qty
 
 
@@ -101,7 +119,8 @@ def _submit_trade(event: dict) -> None:
         print(f"[WATCHER][INFO] Precio {price:.2f} < mínimo configurado ({TRADING_MIN_PRICE}); no se opera.")
         return
     try:
-        quantity = _resolve_quantity(event)
+        # _resolve_quantity puede usar precio/notional, por eso se calcula luego de price
+        quantity = _resolve_quantity({**event, "price": price})
     except Exception as exc:
         print(f"[WATCHER][WARN] Cantidad inválida para trading ({exc})")
         return

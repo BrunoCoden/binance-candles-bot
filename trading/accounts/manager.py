@@ -4,7 +4,7 @@ import json
 import os
 from dataclasses import asdict
 from pathlib import Path
-from typing import Dict, Iterable, Mapping, Optional
+from typing import Any, Dict, Iterable, Mapping, Optional
 
 from .models import AccountConfig, ExchangeCredential, ExchangeEnvironment
 
@@ -43,12 +43,29 @@ class AccountManager:
                 exchange = ex_conf.get("exchange", ex_name).lower()
                 env_value = (ex_conf.get("environment") or ExchangeEnvironment.TESTNET.value).lower()
                 environment = ExchangeEnvironment(env_value)
+                notional_val = ex_conf.get("notional_usdt")
+                notional = float(notional_val) if notional_val not in (None, "") else None
+                leverage_val = ex_conf.get("leverage")
+                leverage = int(leverage_val) if leverage_val not in (None, "") else None
                 cred = ExchangeCredential(
                     exchange=exchange,
                     api_key_env=ex_conf["api_key_env"],
                     api_secret_env=ex_conf["api_secret_env"],
                     environment=environment,
-                    extra={k: v for k, v in ex_conf.items() if k not in {"api_key_env", "api_secret_env", "environment"}},
+                    notional_usdt=notional,
+                    leverage=leverage,
+                    extra={
+                        k: v
+                        for k, v in ex_conf.items()
+                        if k
+                        not in {
+                            "api_key_env",
+                            "api_secret_env",
+                            "environment",
+                            "notional_usdt",
+                            "leverage",
+                        }
+                    },
                 )
                 exchanges[exchange] = cred
             metadata = entry.get("metadata") or {}
@@ -56,6 +73,7 @@ class AccountManager:
                 AccountConfig(
                     user_id=user_id,
                     label=label,
+                    enabled=bool(entry.get("enabled", True)),
                     exchanges=exchanges,
                     metadata=metadata,
                 )
@@ -96,12 +114,107 @@ class AccountManager:
         return credential.resolve_keys(env_mapping)
 
     def to_dict(self) -> dict:
-        return {
-            "users": [
-                {
-                    **asdict(acc),
-                    "exchanges": {name: asdict(cred) for name, cred in acc.exchanges.items()},
-                }
-                for acc in self._accounts.values()
-            ]
-        }
+        """
+        Devuelve una representación serializable a JSON/YAML.
+
+        Se normaliza `environment` a su valor string para evitar que se
+        serialice como Enum en el archivo de cuentas.
+        """
+
+        def _serialize_credential(cred: ExchangeCredential) -> dict:
+            data = asdict(cred)
+            data["environment"] = cred.environment.value
+            return data
+
+        def _serialize_account(acc: AccountConfig) -> dict[str, Any]:
+            return {
+                "id": acc.user_id,
+                "label": acc.label,
+                "enabled": acc.enabled,
+                "metadata": acc.metadata or {},
+                "exchanges": {name: _serialize_credential(cred) for name, cred in acc.exchanges.items()},
+            }
+
+        return {"users": [_serialize_account(acc) for acc in self._accounts.values()]}
+
+    # --- Mutadores -----------------------------------------------------
+
+    def upsert_account(
+        self,
+        user_id: str,
+        *,
+        label: Optional[str] = None,
+        metadata: Optional[Mapping[str, Any]] = None,
+        enabled: Optional[bool] = None,
+    ) -> AccountConfig:
+        """
+        Crea o actualiza una cuenta. No cambia el user_id existente.
+        """
+        if not user_id:
+            raise ValueError("user_id no puede ser vacío.")
+        account = self._accounts.get(user_id)
+        if account:
+            if label:
+                account.label = label
+            if metadata is not None:
+                account.metadata = dict(metadata)
+            if enabled is not None:
+                account.enabled = bool(enabled)
+            return account
+
+        new_account = AccountConfig(
+            user_id=user_id,
+            label=label or user_id,
+            enabled=True if enabled is None else bool(enabled),
+            exchanges={},
+            metadata=dict(metadata or {}),
+        )
+        self._accounts[user_id] = new_account
+        return new_account
+
+    def remove_account(self, user_id: str) -> None:
+        try:
+            del self._accounts[user_id]
+        except KeyError as exc:
+            raise KeyError(f"No existe la cuenta '{user_id}'.") from exc
+
+    def rename_account(self, old_id: str, new_id: str) -> AccountConfig:
+        if not new_id:
+            raise ValueError("new_id no puede ser vacío.")
+        if new_id == old_id:
+            return self.get_account(old_id)
+        if new_id in self._accounts:
+            raise ValueError(f"Ya existe la cuenta '{new_id}'.")
+        account = self.get_account(old_id)
+        del self._accounts[old_id]
+        account.user_id = new_id
+        self._accounts[new_id] = account
+        return account
+
+    def upsert_exchange(self, user_id: str, credential: ExchangeCredential) -> None:
+        account = self.get_account(user_id)
+        credential.exchange = credential.exchange.lower()
+        account.exchanges[credential.exchange] = credential
+
+    def remove_exchange(self, user_id: str, exchange: str) -> None:
+        account = self.get_account(user_id)
+        key = exchange.lower()
+        if key not in account.exchanges:
+            raise KeyError(f"La cuenta {user_id} no tiene credenciales para {exchange}.")
+        del account.exchanges[key]
+
+    def save_to_file(self, path: Path) -> None:
+        """
+        Persiste las cuentas al archivo indicado (YAML o JSON).
+        """
+        data = self.to_dict()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.suffix in {".yaml", ".yml"}:
+            if yaml is None:
+                raise RuntimeError("PyYAML no está instalado. `pip install pyyaml` para escribir archivos YAML.")
+            with path.open("w", encoding="utf-8") as fh:
+                yaml.safe_dump(data, fh, sort_keys=False, allow_unicode=False)
+            return
+
+        with path.open("w", encoding="utf-8") as fh:
+            json.dump(data, fh, indent=2, ensure_ascii=False)

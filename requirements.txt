@@ -12,6 +12,7 @@ requests==2.32.3
 python-dateutil
 tzdata
 python-dotenv
+pyyaml
 
 # Binance USDⓈ-M Futures (UMFutures)
 binance-futures-connector

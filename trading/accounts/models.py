@@ -16,6 +16,8 @@ class ExchangeCredential:
     api_key_env: str
     api_secret_env: str
     environment: ExchangeEnvironment = ExchangeEnvironment.TESTNET
+    notional_usdt: float | None = None
+    leverage: int | None = None
     extra: Dict[str, Any] = field(default_factory=dict)
 
     def resolve_keys(self, env: Mapping[str, str]) -> tuple[str, str]:
@@ -33,6 +35,7 @@ class ExchangeCredential:
 class AccountConfig:
     user_id: str
     label: str
+    enabled: bool = True
     exchanges: Dict[str, ExchangeCredential] = field(default_factory=dict)
     metadata: Dict[str, Any] = field(default_factory=dict)
 

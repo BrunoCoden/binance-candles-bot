@@ -1,8 +1,43 @@
 users:
-  - id: diego
-    label: "OCI test account"
-    exchanges:
-      binance:
-        api_key_env: DIEGO_BINANCE_API_KEY
-        api_secret_env: DIEGO_BINANCE_API_SECRET
-        environment: testnet    # cámbialo a "live" si vas a producción
+- id: prueba1
+  label: asdasa
+  enabled: true
+  metadata: {}
+  exchanges:
+    bybit:
+      exchange: bybit
+      api_key_env: asdasd
+      api_secret_env: asdasd
+      environment: testnet
+      notional_usdt: null
+      leverage: null
+      extra:
+        exchange: binance
+        extra:
+          exchange: binance
+          extra:
+            exchange: binance
+            extra:
+              exchange: binance
+              extra: {}
+- id: bruno
+  label: OCI test account
+  enabled: true
+  metadata: {}
+  exchanges:
+    binance:
+      exchange: binance
+      api_key_env: asdasd
+      api_secret_env: asdasd
+      environment: testnet
+      notional_usdt: null
+      leverage: null
+      extra:
+        exchange: binance
+        extra:
+          exchange: binance
+          extra:
+            exchange: binance
+            extra:
+              exchange: binance
+              extra: {}
