@@ -1,43 +1,13 @@
 users:
-- id: prueba1
-  label: asdasa
-  enabled: true
-  metadata: {}
-  exchanges:
-    bybit:
-      exchange: bybit
-      api_key_env: asdasd
-      api_secret_env: asdasd
-      environment: testnet
-      notional_usdt: null
-      leverage: null
-      extra:
-        exchange: binance
-        extra:
-          exchange: binance
-          extra:
-            exchange: binance
-            extra:
-              exchange: binance
-              extra: {}
-- id: bruno
-  label: OCI test account
-  enabled: true
-  metadata: {}
-  exchanges:
-    binance:
-      exchange: binance
-      api_key_env: asdasd
-      api_secret_env: asdasd
-      environment: testnet
-      notional_usdt: null
-      leverage: null
-      extra:
-        exchange: binance
-        extra:
-          exchange: binance
-          extra:
-            exchange: binance
-            extra:
-              exchange: binance
-              extra: {}
+  - id: bruno
+    label: Cuenta Bruno (live)
+    enabled: true
+    metadata: {}
+    exchanges:
+      binance:
+        api_key_env: BRUNO_BINANCE_API_KEY_LIVE
+        api_secret_env: BRUNO_BINANCE_API_SECRET_LIVE
+        environment: live
+        notional_usdt: 20
+        leverage: 5
+        extra: {}

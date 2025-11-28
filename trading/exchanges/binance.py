@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from decimal import Decimal, ROUND_DOWN
 from typing import Dict, Optional
 
 from binance.um_futures import UMFutures
@@ -25,17 +26,25 @@ class BinanceClient(ExchangeClient):
 
     @staticmethod
     def _format_order_params(order: OrderRequest) -> Dict[str, Optional[str]]:
+        # Binance UM ETHUSDT: qty step 0.001, tick size 0.1 (ajusta si usas otro símbolo).
+        def _quantize(value: float, step: str) -> str:
+            dv = Decimal(str(value)).quantize(Decimal(step), rounding=ROUND_DOWN)
+            if dv <= 0:
+                dv = Decimal(step)
+            # Normaliza sin notación científica
+            return format(dv, "f")
+
         params: Dict[str, Optional[str]] = {
             "symbol": order.symbol,
             "side": order.side.value,
             "type": order.type.value,
-            "quantity": str(order.quantity),
+            "quantity": _quantize(order.quantity, "0.001"),
             "reduceOnly": "true" if order.reduce_only else "false",
         }
         if order.time_in_force:
             params["timeInForce"] = order.time_in_force.value
         if order.price:
-            params["price"] = f"{order.price:.8f}"
+            params["price"] = _quantize(order.price, "0.1")
         return params
 
     def place_order(

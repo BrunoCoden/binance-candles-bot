@@ -1,5 +1,6 @@
 # watcher_alertas.py
 import os
+from pathlib import Path
 import time
 from datetime import datetime, timezone, timedelta
 
@@ -12,8 +13,8 @@ from trading.orders.models import OrderRequest, OrderSide, OrderType, TimeInForc
 
 TRADING_ENABLED = os.getenv("WATCHER_ENABLE_TRADING", "false").lower() == "true"
 TRADING_ACCOUNTS_FILE = os.getenv("WATCHER_ACCOUNTS_FILE", "trading/accounts/sample_accounts.yaml")
-TRADING_USER_ID = os.getenv("WATCHER_TRADING_USER", "default")
-TRADING_EXCHANGE = os.getenv("WATCHER_TRADING_EXCHANGE", "binance")
+TRADING_USER_ID = os.getenv("WATCHER_TRADING_USER", "").strip()
+TRADING_EXCHANGE = os.getenv("WATCHER_TRADING_EXCHANGE", "").strip()
 TRADING_DEFAULT_QTY = os.getenv("WATCHER_TRADING_DEFAULT_QTY", "0.01")
 # Si se indica, calcula cantidad a partir de un notional USDT (qty = notional / price)
 TRADING_DEFAULT_NOTIONAL_USDT = float(os.getenv("WATCHER_TRADING_NOTIONAL_USDT", "0") or 0)
@@ -21,22 +22,59 @@ TRADING_DRY_RUN = os.getenv("WATCHER_TRADING_DRY_RUN", "true").lower() != "false
 TRADING_MIN_PRICE = float(os.getenv("WATCHER_TRADING_MIN_PRICE", "0"))
 
 _executor: OrderExecutor | None = None
+_account_manager: AccountManager | None = None
 _last_order_direction: str | None = None
+
+
+def _load_manager() -> AccountManager | None:
+    global _account_manager
+    if not TRADING_ENABLED:
+        return None
+    try:
+        path = Path(TRADING_ACCOUNTS_FILE)
+        _account_manager = AccountManager.from_file(path)
+        return _account_manager
+    except Exception as exc:
+        print(f"[WATCHER][WARN] No se pudo inicializar AccountManager ({exc}); modo trading deshabilitado.")
+        return None
 
 
 def _resolve_executor() -> OrderExecutor | None:
     global _executor
-    if not TRADING_ENABLED:
+    manager = _load_manager()
+    if manager is None:
         return None
     if _executor is not None:
         return _executor
-    try:
-        manager = AccountManager.from_file(TRADING_ACCOUNTS_FILE)
-    except Exception as exc:
-        print(f"[WATCHER][WARN] No se pudo inicializar AccountManager ({exc}); modo trading deshabilitado.")
-        return None
     _executor = OrderExecutor(manager)
     return _executor
+
+
+def _resolve_targets() -> list[tuple[str, str]]:
+    """
+    Devuelve lista de (user_id, exchange) habilitados.
+    Si se configuró WATCHER_TRADING_USER/EXCHANGE se usa como filtro.
+    """
+    manager = _load_manager()
+    if manager is None:
+        return []
+
+    user_filter = TRADING_USER_ID.lower()
+    if user_filter in {"", "default"}:
+        user_filter = None
+    exchange_filter = TRADING_EXCHANGE.lower() if TRADING_EXCHANGE else None
+
+    targets: list[tuple[str, str]] = []
+    for account in manager.list_accounts():
+        if not account.enabled:
+            continue
+        if user_filter and account.user_id.lower() != user_filter:
+            continue
+        for ex_name, cred in account.exchanges.items():
+            if exchange_filter and ex_name.lower() != exchange_filter:
+                continue
+            targets.append((account.user_id, ex_name))
+    return targets
 
 
 def _direction_to_side(direction: str | None) -> OrderSide:
@@ -50,7 +88,7 @@ def _direction_to_side(direction: str | None) -> OrderSide:
     return mapping[key]
 
 
-def _resolve_quantity(event: dict) -> float:
+def _resolve_quantity(event: dict, notional_usdt: float | None = None) -> float:
     price = _price_from_event(event)
     # Prioridad: cantidad explícita en evento -> notional USDT -> qty por defecto
     qty_raw = event.get("quantity")
@@ -60,10 +98,11 @@ def _resolve_quantity(event: dict) -> float:
             raise ValueError("quantity debe ser > 0")
         return qty
 
-    if TRADING_DEFAULT_NOTIONAL_USDT > 0:
+    notional_source = notional_usdt if notional_usdt and notional_usdt > 0 else TRADING_DEFAULT_NOTIONAL_USDT
+    if notional_source > 0:
         if price is None or price <= 0:
             raise ValueError("No se puede calcular qty desde notional: precio ausente/ inválido.")
-        qty = TRADING_DEFAULT_NOTIONAL_USDT / float(price)
+        qty = notional_source / float(price)
         if qty <= 0:
             raise ValueError("quantity calculada debe ser > 0")
         return qty
@@ -101,6 +140,10 @@ def _submit_trade(event: dict) -> None:
     executor = _resolve_executor()
     if executor is None:
         return
+    targets = _resolve_targets()
+    if not targets:
+        print("[WATCHER][WARN] No hay cuentas habilitadas/filtradas para operar; se omite trading.")
+        return
     try:
         side = _direction_to_side(event.get("direction"))
     except Exception as exc:
@@ -118,31 +161,41 @@ def _submit_trade(event: dict) -> None:
     if TRADING_MIN_PRICE > 0 and price < TRADING_MIN_PRICE:
         print(f"[WATCHER][INFO] Precio {price:.2f} < mínimo configurado ({TRADING_MIN_PRICE}); no se opera.")
         return
-    try:
-        # _resolve_quantity puede usar precio/notional, por eso se calcula luego de price
-        quantity = _resolve_quantity({**event, "price": price})
-    except Exception as exc:
-        print(f"[WATCHER][WARN] Cantidad inválida para trading ({exc})")
-        return
-    order = OrderRequest(
-        symbol=event.get("symbol") or SYMBOL_DISPLAY.replace(".P", ""),
-        side=side,
-        type=OrderType.LIMIT,
-        quantity=quantity,
-        price=price,
-        time_in_force=TimeInForce.GTC,
-        extra_params={
-            "source_event": event.get("type", "unknown"),
-            "event_timestamp": str(event.get("timestamp")),
-        },
-    )
-    try:
-        response = executor.execute(TRADING_USER_ID, TRADING_EXCHANGE, order, dry_run=TRADING_DRY_RUN)
-        print(f"[WATCHER][TRADE] Resultado orden: success={response.success} status={response.status} raw={response.raw}")
-        if response.success:
-            _last_order_direction = direction
-    except Exception as exc:
-        print(f"[WATCHER][ERROR] Falló la ejecución de orden ({exc})")
+    for user_id, exchange in targets:
+        try:
+            account = _account_manager.get_account(user_id) if _account_manager else None
+            cred = account.get_exchange(exchange) if account else None
+            notional = cred.notional_usdt if cred else None
+        except Exception:
+            notional = None
+        try:
+            quantity = _resolve_quantity({**event, "price": price}, notional_usdt=notional)
+        except Exception as exc:
+            print(f"[WATCHER][WARN] Cantidad inválida para trading ({exc}) usuario={user_id} exchange={exchange}")
+            continue
+        order = OrderRequest(
+            symbol=event.get("symbol") or SYMBOL_DISPLAY.replace(".P", ""),
+            side=side,
+            type=OrderType.LIMIT,
+            quantity=quantity,
+            price=price,
+            time_in_force=TimeInForce.GTC,
+            extra_params={
+                "source_event": event.get("type", "unknown"),
+                "event_timestamp": str(event.get("timestamp")),
+                "account": user_id,
+                "exchange": exchange,
+            },
+        )
+        try:
+            response = executor.execute(user_id, exchange, order, dry_run=TRADING_DRY_RUN)
+            print(
+                f"[WATCHER][TRADE] user={user_id} ex={exchange} success={response.success} status={response.status} raw={response.raw}"
+            )
+            if response.success:
+                _last_order_direction = direction
+        except Exception as exc:
+            print(f"[WATCHER][ERROR] Falló la ejecución de orden usuario={user_id} exchange={exchange} ({exc})")
 
 POLL_SECONDS = float(os.getenv("ALERT_POLL_SECONDS", "5"))
 MAX_SEEN = int(os.getenv("ALERT_MAX_SEEN", "500"))
