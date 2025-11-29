@@ -1,5 +1,6 @@
 # watcher_alertas.py
 import os
+import math
 from pathlib import Path
 import time
 from datetime import datetime, timezone, timedelta
@@ -20,6 +21,7 @@ TRADING_DEFAULT_QTY = os.getenv("WATCHER_TRADING_DEFAULT_QTY", "0.01")
 TRADING_DEFAULT_NOTIONAL_USDT = float(os.getenv("WATCHER_TRADING_NOTIONAL_USDT", "0") or 0)
 TRADING_DRY_RUN = os.getenv("WATCHER_TRADING_DRY_RUN", "true").lower() != "false"
 TRADING_MIN_PRICE = float(os.getenv("WATCHER_TRADING_MIN_PRICE", "0"))
+TRADING_MIN_NOTIONAL = float(os.getenv("WATCHER_MIN_NOTIONAL_USDT", "20"))
 
 _executor: OrderExecutor | None = None
 _account_manager: AccountManager | None = None
@@ -102,7 +104,11 @@ def _resolve_quantity(event: dict, notional_usdt: float | None = None) -> float:
     if notional_source > 0:
         if price is None or price <= 0:
             raise ValueError("No se puede calcular qty desde notional: precio ausente/ inválido.")
-        qty = notional_source / float(price)
+        target_notional = max(notional_source, TRADING_MIN_NOTIONAL)
+        # Ajusta qty al múltiplo de step (ETHUSDT: 0.001) hacia arriba para cumplir notional mínimo
+        step = 0.001
+        raw_qty = target_notional / float(price)
+        qty = math.ceil(raw_qty / step) * step
         if qty <= 0:
             raise ValueError("quantity calculada debe ser > 0")
         return qty
