@@ -5,10 +5,13 @@ from pathlib import Path
 import time
 from datetime import datetime, timezone, timedelta
 
+from binance.um_futures import UMFutures
+
 from alerts import generate_alerts, send_alerts, format_alert_message
 from trade_logger import send_trade_notification, format_timestamp
 from velas import SYMBOL_DISPLAY, STREAM_INTERVAL
 from trading.accounts.manager import AccountManager
+from trading.accounts.models import ExchangeEnvironment
 from trading.orders.executor import OrderExecutor
 from trading.orders.models import OrderRequest, OrderSide, OrderType, TimeInForce
 
@@ -141,6 +144,35 @@ def _price_from_event(event: dict) -> float | None:
     return None
 
 
+def _has_open_position_same_direction(user_id: str, exchange: str, direction: str, symbol: str) -> bool:
+    """
+    Devuelve True si ya hay posición abierta en la misma dirección para el símbolo.
+    Solo aplica a binance; si falla la consulta no bloquea (retorna False).
+    """
+    try:
+        if exchange.lower() != "binance" or _account_manager is None:
+            return False
+        account = _account_manager.get_account(user_id)
+        cred = account.get_exchange(exchange)
+        api_key, api_secret = cred.resolve_keys(os.environ)
+        base_url = "https://testnet.binancefuture.com" if cred.environment == ExchangeEnvironment.TESTNET else None
+        client = UMFutures(key=api_key, secret=api_secret, base_url=base_url) if base_url else UMFutures(
+            key=api_key, secret=api_secret
+        )
+        pos = client.get_position_risk(symbol=symbol)
+        if not pos:
+            return False
+        pos_amt = float(pos[0].get("positionAmt") or 0)
+        if direction == "long" and pos_amt > 0:
+            return True
+        if direction == "short" and pos_amt < 0:
+            return True
+        return False
+    except Exception as exc:  # pragma: no cover - externo
+        print(f"[WATCHER][WARN] No se pudo obtener posición para {user_id}/{exchange}: {exc}")
+        return False
+
+
 def _submit_trade(event: dict) -> None:
     global _last_order_direction
     executor = _resolve_executor()
@@ -189,8 +221,12 @@ def _submit_trade(event: dict) -> None:
             sl_price = float(sl_price) if sl_price is not None else None
         except Exception:
             sl_price = None
+        symbol = event.get("symbol") or SYMBOL_DISPLAY.replace(".P", "")
+        if _has_open_position_same_direction(user_id, exchange, direction, symbol):
+            print(f"[WATCHER][INFO] Ya hay posición {direction} abierta en {symbol}; se omite señal.")
+            continue
         order = OrderRequest(
-            symbol=event.get("symbol") or SYMBOL_DISPLAY.replace(".P", ""),
+            symbol=symbol,
             side=side,
             type=OrderType.LIMIT,
             quantity=quantity,
