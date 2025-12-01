@@ -173,6 +173,47 @@ def _has_open_position_same_direction(user_id: str, exchange: str, direction: st
         return False
 
 
+def _close_opposite_position(user_id: str, exchange: str, direction: str, symbol: str) -> bool:
+    """
+    Si hay posición abierta en dirección opuesta, la cierra con una orden reduceOnly MARKET.
+    Devuelve True si no hay opuesta o si se logró enviar la orden de cierre.
+    """
+    try:
+        if exchange.lower() != "binance" or _account_manager is None:
+            return True
+        account = _account_manager.get_account(user_id)
+        cred = account.get_exchange(exchange)
+        api_key, api_secret = cred.resolve_keys(os.environ)
+        base_url = "https://testnet.binancefuture.com" if cred.environment == ExchangeEnvironment.TESTNET else None
+        client = UMFutures(key=api_key, secret=api_secret, base_url=base_url) if base_url else UMFutures(
+            key=api_key, secret=api_secret
+        )
+        pos = client.get_position_risk(symbol=symbol)
+        if not pos:
+            return True
+        pos_amt = float(pos[0].get("positionAmt") or 0)
+        if pos_amt == 0:
+            return True
+        # Chequear si es opuesto
+        if direction == "long" and pos_amt > 0:
+            return True
+        if direction == "short" and pos_amt < 0:
+            return True
+        qty = abs(pos_amt)
+        # Ejecuta cierre reduceOnly MARKET
+        side = "BUY" if pos_amt < 0 else "SELL"
+        try:
+            client.new_order(symbol=symbol, side=side, type="MARKET", quantity=f"{qty:.3f}", reduceOnly="true")
+            print(f"[WATCHER][INFO] Cierre reduceOnly de posición opuesta qty={qty} side={side} en {symbol}")
+            return True
+        except Exception as exc:  # pragma: no cover - externo
+            print(f"[WATCHER][ERROR] No se pudo cerrar posición opuesta ({exc})")
+            return False
+    except Exception as exc:  # pragma: no cover - externo
+        print(f"[WATCHER][WARN] No se pudo verificar/cerrar posición opuesta: {exc}")
+        return False
+
+
 def _submit_trade(event: dict) -> None:
     global _last_order_direction
     executor = _resolve_executor()
@@ -222,6 +263,10 @@ def _submit_trade(event: dict) -> None:
         except Exception:
             sl_price = None
         symbol = event.get("symbol") or SYMBOL_DISPLAY.replace(".P", "")
+        # Si hay posición opuesta, intenta cerrarla antes de re-entrar
+        if not _close_opposite_position(user_id, exchange, direction, symbol):
+            print(f"[WATCHER][WARN] No se pudo cerrar posición opuesta en {symbol}; se omite señal.")
+            continue
         if _has_open_position_same_direction(user_id, exchange, direction, symbol):
             print(f"[WATCHER][INFO] Ya hay posición {direction} abierta en {symbol}; se omite señal.")
             continue
