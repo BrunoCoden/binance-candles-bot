@@ -179,6 +179,16 @@ def _submit_trade(event: dict) -> None:
         except Exception as exc:
             print(f"[WATCHER][WARN] Cantidad inválida para trading ({exc}) usuario={user_id} exchange={exchange}")
             continue
+        tp_price = event.get("tp") or event.get("take_profit")
+        sl_price = event.get("sl") or event.get("stop_loss")
+        try:
+            tp_price = float(tp_price) if tp_price is not None else None
+        except Exception:
+            tp_price = None
+        try:
+            sl_price = float(sl_price) if sl_price is not None else None
+        except Exception:
+            sl_price = None
         order = OrderRequest(
             symbol=event.get("symbol") or SYMBOL_DISPLAY.replace(".P", ""),
             side=side,
@@ -191,6 +201,8 @@ def _submit_trade(event: dict) -> None:
                 "event_timestamp": str(event.get("timestamp")),
                 "account": user_id,
                 "exchange": exchange,
+                "tp": tp_price,
+                "sl": sl_price,
             },
         )
         try:
@@ -198,6 +210,14 @@ def _submit_trade(event: dict) -> None:
             print(
                 f"[WATCHER][TRADE] user={user_id} ex={exchange} success={response.success} status={response.status} raw={response.raw}"
             )
+            try:
+                # Log explícito de los TP/SL enviados (bracket) para depurar fallos.
+                bracket_raw = response.raw.get("bracket") if isinstance(response.raw, dict) else None
+                if bracket_raw is not None:
+                    print(f"[WATCHER][BRACKET] user={user_id} ex={exchange} bracket={bracket_raw}")
+            except Exception:
+                # No interrumpir el loop si la respuesta no tiene el formato esperado.
+                pass
             if response.success:
                 _last_order_direction = direction
         except Exception as exc:

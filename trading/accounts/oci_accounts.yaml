@@ -9,5 +9,5 @@ users:
         api_secret_env: BRUNO_BINANCE_API_SECRET_LIVE
         environment: live
         notional_usdt: 20
-        leverage: 5
+        leverage: 1
         extra: {}

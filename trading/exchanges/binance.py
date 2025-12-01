@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import os
+import math
 from decimal import Decimal, ROUND_DOWN
-from typing import Dict, Optional
+from typing import Any, Dict, Optional, List
 
 from binance.um_futures import UMFutures
 
@@ -46,6 +47,101 @@ class BinanceClient(ExchangeClient):
         if order.price:
             params["price"] = _quantize(order.price, "0.1")
         return params
+
+    def _place_bracket(
+        self,
+        client: UMFutures,
+        symbol: str,
+        side: str,
+        quantity: float,
+        tp: float | None,
+        sl: float | None,
+    ) -> Dict[str, Any]:
+        """
+        Envía órdenes reduceOnly de TP y SL usando órdenes condicionadas límite:
+        - TP: TAKE_PROFIT con price/stopPrice (lanzada al tocar stopPrice, ejecuta a límite).
+        - SL: STOP con price/stopPrice (lanzada al tocar stopPrice, ejecuta a límite).
+        Esto evita market orders de salida.
+        """
+        results: Dict[str, Any] = {}
+
+        def _quant(v: float, step: str) -> str:
+            dv = Decimal(str(v)).quantize(Decimal(step), rounding=ROUND_DOWN)
+            if dv <= 0:
+                dv = Decimal(step)
+            return format(dv, "f")
+
+        qty_str = _quant(quantity, "0.001")
+        if tp and tp > 0:
+            try:
+                resp_tp = client.new_order(
+                    symbol=symbol,
+                    side="SELL" if side == "BUY" else "BUY",
+                    type="TAKE_PROFIT",
+                    price=_quant(tp, "0.1"),
+                    stopPrice=_quant(tp, "0.1"),
+                    quantity=qty_str,
+                    reduceOnly="true",
+                    timeInForce="GTC",
+                )
+                results["tp"] = resp_tp
+            except Exception as exc:  # pragma: no cover - externo
+                logger.error("Error enviando TP reduceOnly: %s", exc)
+                results["tp_error"] = str(exc)
+
+        if sl and sl > 0:
+            try:
+                resp_sl = client.new_order(
+                    symbol=symbol,
+                    side="SELL" if side == "BUY" else "BUY",
+                    type="STOP",
+                    price=_quant(sl, "0.1"),
+                    stopPrice=_quant(sl, "0.1"),
+                    quantity=qty_str,
+                    reduceOnly="true",
+                    timeInForce="GTC",
+                )
+                results["sl"] = resp_sl
+            except Exception as exc:  # pragma: no cover - externo
+                logger.error("Error enviando SL reduceOnly: %s", exc)
+                results["sl_error"] = str(exc)
+
+        return results
+
+    def _current_position_qty(self, client: UMFutures, symbol: str) -> float:
+        """
+        Devuelve el tamaño de posición actual (signed: >0 long, <0 short) para el símbolo.
+        """
+        try:
+            positions = client.position_information(symbol=symbol)
+            if positions:
+                pos_amt = positions[0].get("positionAmt")
+                return float(pos_amt or 0.0)
+        except Exception as exc:  # pragma: no cover - externo
+            logger.error("No se pudo obtener posición actual para %s: %s", symbol, exc)
+        return 0.0
+
+    def _cancel_open_reduce_only(self, client: UMFutures, symbol: str) -> List[Dict[str, Any]]:
+        """
+        Cancela órdenes abiertas reduceOnly del símbolo (TP/SL previos) antes de colocar nuevos.
+        """
+        canceled: List[Dict[str, Any]] = []
+        try:
+            open_orders = client.get_open_orders(symbol=symbol)
+        except Exception as exc:  # pragma: no cover - externo
+            logger.error("Error listando órdenes abiertas para cancelar reduceOnly: %s", exc)
+            return canceled
+
+        for order in open_orders:
+            try:
+                if not bool(order.get("reduceOnly")):
+                    continue
+                oid = order.get("orderId")
+                resp = client.cancel_order(symbol=symbol, orderId=oid)
+                canceled.append(resp)
+            except Exception as exc:  # pragma: no cover - externo
+                logger.error("Error cancelando orden reduceOnly %s: %s", order.get("orderId"), exc)
+        return canceled
 
     def place_order(
         self,
@@ -96,13 +192,42 @@ class BinanceClient(ExchangeClient):
             order_id = str(response.get("orderId") or "")
             filled_qty = float(response.get("executedQty") or 0.0)
             avg_price = float(response.get("avgPrice") or order.price or 0.0)
+            tp = order.extra_params.get("tp") if order.extra_params else None
+            sl = order.extra_params.get("sl") if order.extra_params else None
+            bracket_raw: Dict[str, Any] = {}
+            if tp or sl:
+                try:
+                    # Cancela brackets previos y ajusta qty al tamaño esperado de la posición tras esta orden.
+                    canceled = self._cancel_open_reduce_only(client, order.symbol)
+                    current_pos = self._current_position_qty(client, order.symbol)
+                    signed_qty = order.quantity if order.side.value.upper() == "BUY" else -order.quantity
+                    expected_pos = current_pos + signed_qty
+                    bracket_qty = abs(expected_pos) if expected_pos != 0 else order.quantity
+                    if bracket_qty <= 0:
+                        bracket_qty = order.quantity
+                    bracket_raw = {
+                        "canceled": canceled,
+                        **self._place_bracket(client, order.symbol, order.side.value, bracket_qty, tp, sl),
+                    }
+                except Exception as exc:  # pragma: no cover - externo
+                    logger.error("Error enviando TP/SL: %s", exc)
+                    bracket_raw = {"bracket_error": str(exc)}
+            logger.info(
+                "Orden enviada (entry + bracket) symbol=%s side=%s qty=%s tp=%s sl=%s bracket=%s",
+                order.symbol,
+                order.side.value,
+                order.quantity,
+                tp,
+                sl,
+                bracket_raw,
+            )
             return OrderResponse(
                 success=True,
                 status=status,
                 exchange_order_id=order_id,
                 filled_quantity=filled_qty,
                 avg_price=avg_price,
-                raw=response,
+                raw={"entry": response, "bracket": bracket_raw},
             )
         except Exception as exc:
             logger.exception("Error enviando orden a Binance: %s", exc)
