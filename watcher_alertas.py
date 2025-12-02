@@ -239,6 +239,8 @@ def _close_opposite_position(user_id: str, exchange: str, direction: str, symbol
         if direction == "short" and pos_amt < 0:
             return True
         qty = abs(pos_amt)
+        # Limpia reduceOnly existentes antes de recrear
+        _cancel_reduce_only_open(client, symbol)
         # Ejecuta cierre reduceOnly LIMIT al precio de la nueva señal
         side = "BUY" if pos_amt < 0 else "SELL"
         try:
