@@ -42,6 +42,9 @@ class BinanceClient(ExchangeClient):
             "quantity": _quantize(order.quantity, "0.001"),
             "reduceOnly": "true" if order.reduce_only else "false",
         }
+        # Forzamos post-only en entradas para evitar fills a otro precio.
+        if not order.reduce_only:
+            params["isPostOnly"] = "true"
         if order.time_in_force:
             params["timeInForce"] = order.time_in_force.value
         if order.price:
@@ -58,10 +61,8 @@ class BinanceClient(ExchangeClient):
         sl: float | None,
     ) -> Dict[str, Any]:
         """
-        Envía órdenes reduceOnly de TP y SL usando órdenes condicionadas límite:
-        - TP: TAKE_PROFIT con price/stopPrice (lanzada al tocar stopPrice, ejecuta a límite).
-        - SL: STOP con price/stopPrice (lanzada al tocar stopPrice, ejecuta a límite).
-        Esto evita market orders de salida.
+        Envía TP/SL como órdenes condicionadas de mercado con closePosition=true
+        (equivalente a reduceOnly) disparadas por MARK_PRICE.
         """
         results: Dict[str, Any] = {}
 
@@ -77,11 +78,11 @@ class BinanceClient(ExchangeClient):
                 resp_tp = client.new_order(
                     symbol=symbol,
                     side="SELL" if side == "BUY" else "BUY",
-                    type="TAKE_PROFIT",
-                    price=_quant(tp, "0.1"),
+                    type="TAKE_PROFIT_MARKET",
                     stopPrice=_quant(tp, "0.1"),
-                    quantity=qty_str,
-                    reduceOnly="true",
+                    workingType="MARK_PRICE",
+                    # closePosition hace que no abra posición nueva y cierre todo
+                    closePosition="true",
                     timeInForce="GTC",
                 )
                 results["tp"] = resp_tp
@@ -94,11 +95,10 @@ class BinanceClient(ExchangeClient):
                 resp_sl = client.new_order(
                     symbol=symbol,
                     side="SELL" if side == "BUY" else "BUY",
-                    type="STOP",
-                    price=_quant(sl, "0.1"),
+                    type="STOP_MARKET",
                     stopPrice=_quant(sl, "0.1"),
-                    quantity=qty_str,
-                    reduceOnly="true",
+                    workingType="MARK_PRICE",
+                    closePosition="true",
                     timeInForce="GTC",
                 )
                 results["sl"] = resp_sl
@@ -111,9 +111,10 @@ class BinanceClient(ExchangeClient):
     def _current_position_qty(self, client: UMFutures, symbol: str) -> float:
         """
         Devuelve el tamaño de posición actual (signed: >0 long, <0 short) para el símbolo.
+        Usa get_position_risk, que está soportado en la lib actual.
         """
         try:
-            positions = client.position_information(symbol=symbol)
+            positions = client.get_position_risk(symbol=symbol)
             if positions:
                 pos_amt = positions[0].get("positionAmt")
                 return float(pos_amt or 0.0)
@@ -194,8 +195,10 @@ class BinanceClient(ExchangeClient):
             avg_price = float(response.get("avgPrice") or order.price or 0.0)
             tp = order.extra_params.get("tp") if order.extra_params else None
             sl = order.extra_params.get("sl") if order.extra_params else None
+            skip_bracket = bool(order.extra_params.get("skip_bracket")) if order.extra_params else False
             bracket_raw: Dict[str, Any] = {}
-            if tp or sl:
+            # Solo gestionar TP/SL si corresponde: no lo hacemos en reduceOnly, ni cuando se pide skip_bracket.
+            if (tp or sl) and not order.reduce_only and not skip_bracket:
                 try:
                     # Cancela brackets previos y ajusta qty al tamaño esperado de la posición tras esta orden.
                     canceled = self._cancel_open_reduce_only(client, order.symbol)

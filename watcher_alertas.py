@@ -30,6 +30,10 @@ _executor: OrderExecutor | None = None
 _account_manager: AccountManager | None = None
 _last_order_direction: str | None = None
 _pending_signals: list[dict] = []
+_thresholds: list[dict] = []
+THRESHOLDS_PATH = Path("backtest/backtestTR/pending_thresholds.json")
+LOSS_PCT = 0.05  # 5% en contra
+GAIN_PCT = 0.09  # 9% a favor
 
 
 def _load_manager() -> AccountManager | None:
@@ -54,6 +58,38 @@ def _resolve_executor() -> OrderExecutor | None:
         return _executor
     _executor = OrderExecutor(manager)
     return _executor
+
+
+def _load_thresholds():
+    """
+    Carga umbrales pendientes desde disco (si existe).
+    """
+    global _thresholds
+    try:
+        if THRESHOLDS_PATH.exists():
+            import json
+
+            data = json.loads(THRESHOLDS_PATH.read_text())
+            if isinstance(data, list):
+                _thresholds = data
+    except Exception:
+        _thresholds = []
+
+
+def _save_thresholds():
+    """
+    Guarda umbrales pendientes en disco para persistencia simple.
+    """
+    try:
+        import json
+
+        THRESHOLDS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        THRESHOLDS_PATH.write_text(json.dumps(_thresholds, indent=2))
+    except Exception:
+        pass
+
+
+_load_thresholds()
 
 
 def _resolve_targets() -> list[tuple[str, str]]:
@@ -145,6 +181,180 @@ def _price_from_event(event: dict) -> float | None:
     return None
 
 
+def _compute_thresholds(direction: str, entry_price: float) -> tuple[float, float]:
+    """
+    Calcula precios objetivo para cierre por pérdida/ganancia fija.
+    Long: loss = -5%, gain = +9%
+    Short: loss = +5% (en contra), gain = -9% (a favor).
+    """
+    if direction == "long":
+        loss_price = entry_price * (1 - LOSS_PCT)
+        gain_price = entry_price * (1 + GAIN_PCT)
+    else:
+        loss_price = entry_price * (1 + LOSS_PCT)
+        gain_price = entry_price * (1 - GAIN_PCT)
+    return loss_price, gain_price
+
+
+def _register_threshold(user_id: str, exchange: str, symbol: str, direction: str, entry_price: float):
+    """
+    Registra umbrales de cierre (-5% / +9%) para una nueva operación.
+    Reemplaza cualquier registro previo del mismo usuario/exchange/símbolo.
+    """
+    global _thresholds
+    loss_price, gain_price = _compute_thresholds(direction, entry_price)
+    # filtra previos
+    _thresholds = [
+        th
+        for th in _thresholds
+        if not (
+            th.get("user_id") == user_id
+            and th.get("exchange") == exchange
+            and th.get("symbol") == symbol
+        )
+    ]
+    _thresholds.append(
+        {
+            "user_id": user_id,
+            "exchange": exchange,
+            "symbol": symbol,
+            "direction": direction,
+            "entry_price": entry_price,
+            "loss_price": loss_price,
+            "gain_price": gain_price,
+            "fired_loss": False,
+            "fired_gain": False,
+        }
+    )
+    _save_thresholds()
+
+
+def _current_position(user_id: str, exchange: str, symbol: str) -> float:
+    """
+    Devuelve cantidad firmada de la posición actual (long >0, short <0).
+    Solo implementado para binance; si falla devuelve 0.
+    """
+    try:
+        if exchange.lower() != "binance" or _account_manager is None:
+            return 0.0
+        account = _account_manager.get_account(user_id)
+        cred = account.get_exchange(exchange)
+        api_key, api_secret = cred.resolve_keys(os.environ)
+        base_url = "https://testnet.binancefuture.com" if cred.environment == ExchangeEnvironment.TESTNET else None
+        client = UMFutures(key=api_key, secret=api_secret, base_url=base_url) if base_url else UMFutures(
+            key=api_key, secret=api_secret
+        )
+        pos = client.get_position_risk(symbol=symbol)
+        if not pos:
+            return 0.0
+        return float(pos[0].get("positionAmt") or 0.0)
+    except Exception:
+        return 0.0
+
+
+def _close_position(user_id: str, exchange: str, symbol: str, direction: str) -> bool:
+    """
+    Cierra posición completa usando orden reduceOnly MARKET.
+    direction: sentido de la posición actual ('long' -> vender, 'short' -> comprar)
+    """
+    if exchange.lower() != "binance" or _account_manager is None:
+        return False
+    try:
+        account = _account_manager.get_account(user_id)
+        cred = account.get_exchange(exchange)
+        api_key, api_secret = cred.resolve_keys(os.environ)
+        base_url = "https://testnet.binancefuture.com" if cred.environment == ExchangeEnvironment.TESTNET else None
+        client = UMFutures(key=api_key, secret=api_secret, base_url=base_url) if base_url else UMFutures(
+            key=api_key, secret=api_secret
+        )
+        pos_amt = _current_position(user_id, exchange, symbol)
+        if pos_amt == 0:
+            return False
+        qty = abs(pos_amt)
+        side = "SELL" if pos_amt > 0 else "BUY"
+        client.new_order(
+            symbol=symbol,
+            side=side,
+            type="MARKET",
+            quantity=f"{qty:.3f}",
+            reduceOnly="true",
+        )
+        print(f"[WATCHER][INFO] Cierre reduceOnly MARKET user={user_id} ex={exchange} symbol={symbol} qty={qty} side={side}")
+        return True
+    except Exception as exc:
+        print(f"[WATCHER][WARN] No se pudo cerrar posición user={user_id} ex={exchange}: {exc}")
+        return False
+
+
+def _evaluate_thresholds(current_price: float, ts) -> list[dict]:
+    """
+    Evalúa si el precio actual dispara algún cierre por pérdida/ganancia.
+    Devuelve lista de alertas a emitir y ejecuta cierre reduceOnly MARKET cuando corresponde.
+    """
+    alerts = []
+    updated = False
+    keep_thresholds = []
+
+    for th in _thresholds:
+        user_id = th.get("user_id")
+        exchange = th.get("exchange")
+        symbol = th.get("symbol", SYMBOL_DISPLAY.replace(".P", ""))
+        direction = th.get("direction")
+        entry = float(th.get("entry_price") or 0)
+        loss_price = float(th.get("loss_price") or 0)
+        gain_price = float(th.get("gain_price") or 0)
+        fired_loss = th.get("fired_loss", False)
+        fired_gain = th.get("fired_gain", False)
+
+        if entry <= 0:
+            continue
+        # Si ya no hay posición, limpiar registro
+        pos_amt = _current_position(user_id, exchange, symbol)
+        if pos_amt == 0:
+            updated = True
+            continue
+
+        hit_loss = False
+        hit_gain = False
+        if direction == "long":
+            hit_loss = (not fired_loss) and current_price <= loss_price
+            hit_gain = (not fired_gain) and current_price >= gain_price
+        else:  # short
+            hit_loss = (not fired_loss) and current_price >= loss_price
+            hit_gain = (not fired_gain) and current_price <= gain_price
+
+        if hit_loss or hit_gain:
+            kind = "ganancia +9%" if hit_gain else "pérdida -5%"
+            # Ejecuta cierre reduceOnly MARKET del tamaño actual
+            _close_position(user_id, exchange, symbol, direction)
+            alerts.append(
+                {
+                    "type": "auto_close",
+                    "timestamp": ts,
+                    "message": (
+                        f"{symbol} {STREAM_INTERVAL}\n"
+                        f"Cierre {direction.upper()} por {kind}\n"
+                        f"Entrada: {entry:.2f}\n"
+                        f"Último: {current_price:.2f}"
+                    ),
+                    "direction": direction,
+                    "user_id": user_id,
+                    "exchange": exchange,
+                }
+            )
+            updated = True
+            # una vez disparado, removemos el registro (se reemplaza con la próxima operación)
+            continue
+
+        keep_thresholds.append(th)
+
+    if updated:
+        _thresholds[:] = keep_thresholds
+        _save_thresholds()
+
+    return alerts
+
+
 def _has_open_position_same_direction(user_id: str, exchange: str, direction: str, symbol: str) -> bool:
     """
     Devuelve True si ya hay posición abierta en la misma dirección para el símbolo.
@@ -171,6 +381,33 @@ def _has_open_position_same_direction(user_id: str, exchange: str, direction: st
         return False
     except Exception as exc:  # pragma: no cover - externo
         print(f"[WATCHER][WARN] No se pudo obtener posición para {user_id}/{exchange}: {exc}")
+        return False
+
+
+def _has_opposite_position(user_id: str, exchange: str, direction: str, symbol: str) -> bool:
+    """
+    True si hay posición abierta en el sentido contrario.
+    """
+    try:
+        if exchange.lower() != "binance" or _account_manager is None:
+            return False
+        account = _account_manager.get_account(user_id)
+        cred = account.get_exchange(exchange)
+        api_key, api_secret = cred.resolve_keys(os.environ)
+        base_url = "https://testnet.binancefuture.com" if cred.environment == ExchangeEnvironment.TESTNET else None
+        client = UMFutures(key=api_key, secret=api_secret, base_url=base_url) if base_url else UMFutures(
+            key=api_key, secret=api_secret
+        )
+        pos = client.get_position_risk(symbol=symbol)
+        if not pos:
+            return False
+        pos_amt = float(pos[0].get("positionAmt") or 0)
+        if direction == "long" and pos_amt < 0:
+            return True
+        if direction == "short" and pos_amt > 0:
+            return True
+        return False
+    except Exception:
         return False
 
 
@@ -211,8 +448,8 @@ def _interval_seconds(interval: str) -> int:
 
 def _close_opposite_position(user_id: str, exchange: str, direction: str, symbol: str, price: float) -> bool:
     """
-    Si hay posición abierta en dirección opuesta, intenta cerrarla con una orden reduceOnly LIMIT
-    al mismo precio de la nueva señal. Devuelve True si no hay opuesta o si se pudo enviar el cierre.
+    Si hay posición abierta en dirección opuesta, intenta cerrarla con una orden reduceOnly MARKET.
+    Devuelve True si no hay opuesta o si se pudo enviar el cierre.
     """
     try:
         if exchange.lower() != "binance" or _account_manager is None:
@@ -224,14 +461,12 @@ def _close_opposite_position(user_id: str, exchange: str, direction: str, symbol
         client = UMFutures(key=api_key, secret=api_secret, base_url=base_url) if base_url else UMFutures(
             key=api_key, secret=api_secret
         )
-        # Si no hay posición, limpia reduceOnly pendientes del símbolo
+        # Si no hay posición, no tocamos TP/SL (ya no existen o no hay riesgo)
         pos = client.get_position_risk(symbol=symbol)
         if not pos:
-            _cancel_reduce_only_open(client, symbol)
             return True
         pos_amt = float(pos[0].get("positionAmt") or 0)
         if pos_amt == 0:
-            _cancel_reduce_only_open(client, symbol)
             return True
         # Chequear si es opuesto
         if direction == "long" and pos_amt > 0:
@@ -239,23 +474,19 @@ def _close_opposite_position(user_id: str, exchange: str, direction: str, symbol
         if direction == "short" and pos_amt < 0:
             return True
         qty = abs(pos_amt)
-        # Limpia reduceOnly existentes antes de recrear
-        _cancel_reduce_only_open(client, symbol)
-        # Ejecuta cierre reduceOnly LIMIT al precio de la nueva señal
+        # Ejecuta cierre reduceOnly MARKET
         side = "BUY" if pos_amt < 0 else "SELL"
         try:
             client.new_order(
                 symbol=symbol,
                 side=side,
-                type="LIMIT",
-                price=f"{price:.1f}",
+                type="MARKET",
                 quantity=f"{qty:.3f}",
-                timeInForce="GTC",
                 reduceOnly="true",
             )
             print(
-                f"[WATCHER][INFO] Cierre reduceOnly (LIMIT) de posición opuesta qty={qty} side={side} "
-                f"en {symbol} price={price:.1f}"
+                f"[WATCHER][INFO] Cierre reduceOnly (MARKET) de posición opuesta qty={qty} side={side} "
+                f"en {symbol}"
             )
             return True
         except Exception as exc:  # pragma: no cover - externo
@@ -264,6 +495,71 @@ def _close_opposite_position(user_id: str, exchange: str, direction: str, symbol
     except Exception as exc:  # pragma: no cover - externo
         print(f"[WATCHER][WARN] No se pudo verificar/cerrar posición opuesta: {exc}")
         return False
+
+
+def _sync_brackets(user_id: str, exchange: str, symbol: str, direction: str, tp: float | None, sl: float | None):
+    """
+    Recalibra TP/SL reduceOnly según la posición actual:
+    - Si posición = 0: cancela reduceOnly abiertos (limpieza).
+    - Si posición en el mismo sentido que direction: cancela reduceOnly y los recrea con el tamaño actual.
+    - Si posición contraria: no hace nada (mantiene protección previa).
+    """
+    if exchange.lower() != "binance" or _account_manager is None:
+        return
+    if tp is None and sl is None:
+        return
+    try:
+        account = _account_manager.get_account(user_id)
+        cred = account.get_exchange(exchange)
+        api_key, api_secret = cred.resolve_keys(os.environ)
+        base_url = "https://testnet.binancefuture.com" if cred.environment == ExchangeEnvironment.TESTNET else None
+        client = UMFutures(key=api_key, secret=api_secret, base_url=base_url) if base_url else UMFutures(
+            key=api_key, secret=api_secret
+        )
+        # Estado actual de la posición
+        pos = client.get_position_risk(symbol=symbol)
+        pos_amt = float(pos[0].get("positionAmt") or 0) if pos else 0.0
+        # Dirección de la posición actual
+        if pos_amt == 0:
+            _cancel_reduce_only_open(client, symbol)
+            return
+        if direction == "long" and pos_amt < 0:
+            # Opuesta: mantenemos TP/SL existentes
+            return
+        if direction == "short" and pos_amt > 0:
+            return
+        qty = abs(pos_amt)
+        # Limpia reduceOnly previos y recrea
+        _cancel_reduce_only_open(client, symbol)
+        side = "BUY" if pos_amt > 0 else "SELL"
+        try:
+            _ = client.new_order(
+                symbol=symbol,
+                side="SELL" if side == "BUY" else "BUY",
+                type="TAKE_PROFIT",
+                price=f"{tp:.1f}" if tp else None,
+                stopPrice=f"{tp:.1f}" if tp else None,
+                quantity=f"{qty:.3f}",
+                reduceOnly="true",
+                timeInForce="GTC",
+            ) if tp else None
+        except Exception as exc:
+            print(f"[WATCHER][WARN] Error recreando TP reduceOnly: {exc}")
+        try:
+            _ = client.new_order(
+                symbol=symbol,
+                side="SELL" if side == "BUY" else "BUY",
+                type="STOP",
+                price=f"{sl:.1f}" if sl else None,
+                stopPrice=f"{sl:.1f}" if sl else None,
+                quantity=f"{qty:.3f}",
+                reduceOnly="true",
+                timeInForce="GTC",
+            ) if sl else None
+        except Exception as exc:
+            print(f"[WATCHER][WARN] Error recreando SL reduceOnly: {exc}")
+    except Exception as exc:  # pragma: no cover - externo
+        print(f"[WATCHER][WARN] No se pudo sincronizar TP/SL: {exc}")
 
 
 def _submit_trade(event: dict) -> None:
@@ -315,13 +611,27 @@ def _submit_trade(event: dict) -> None:
         except Exception:
             sl_price = None
         symbol = event.get("symbol") or SYMBOL_DISPLAY.replace(".P", "")
-        # Si hay posición opuesta, intenta cerrarla antes de re-entrar
-        if not _close_opposite_position(user_id, exchange, direction, symbol, price):
-            print(f"[WATCHER][WARN] No se pudo cerrar posición opuesta en {symbol}; se omite señal.")
-            continue
+        had_opposite = _has_opposite_position(user_id, exchange, direction, symbol)
+        # Si hay posición opuesta, envía cierre reduceOnly y entrada simultánea en el mismo precio.
+        # Se mantienen TP/SL previos hasta que el cierre se ejecute.
+        if had_opposite:
+            if not _close_opposite_position(user_id, exchange, direction, symbol, price):
+                print(f"[WATCHER][WARN] No se pudo cerrar posición opuesta en {symbol}; se omite señal.")
+                continue
         if _has_open_position_same_direction(user_id, exchange, direction, symbol):
             print(f"[WATCHER][INFO] Ya hay posición {direction} abierta en {symbol}; se omite señal.")
             continue
+
+        extra = {
+            "source_event": event.get("type", "unknown"),
+            "event_timestamp": str(event.get("timestamp")),
+            "account": user_id,
+            "exchange": exchange,
+            "tp": tp_price,
+            "sl": sl_price,
+            # Cuando había posición opuesta, evitamos cancelar TP/SL previos hasta que cierre.
+            "skip_bracket": had_opposite,
+        }
         order = OrderRequest(
             symbol=symbol,
             side=side,
@@ -329,30 +639,25 @@ def _submit_trade(event: dict) -> None:
             quantity=quantity,
             price=price,
             time_in_force=TimeInForce.GTC,
-            extra_params={
-                "source_event": event.get("type", "unknown"),
-                "event_timestamp": str(event.get("timestamp")),
-                "account": user_id,
-                "exchange": exchange,
-                "tp": tp_price,
-                "sl": sl_price,
-            },
+            extra_params=extra,
         )
+
         try:
             response = executor.execute(user_id, exchange, order, dry_run=TRADING_DRY_RUN)
             print(
                 f"[WATCHER][TRADE] user={user_id} ex={exchange} success={response.success} status={response.status} raw={response.raw}"
             )
             try:
-                # Log explícito de los TP/SL enviados (bracket) para depurar fallos.
                 bracket_raw = response.raw.get("bracket") if isinstance(response.raw, dict) else None
                 if bracket_raw is not None:
                     print(f"[WATCHER][BRACKET] user={user_id} ex={exchange} bracket={bracket_raw}")
             except Exception:
-                # No interrumpir el loop si la respuesta no tiene el formato esperado.
                 pass
             if response.success:
                 _last_order_direction = direction
+                # Registra umbrales fijos (-5% / +9%) para alertas de cierre
+                entry_used = float(response.avg_price or price)
+                _register_threshold(user_id, exchange, symbol, direction, entry_used)
         except Exception as exc:
             print(f"[WATCHER][ERROR] Falló la ejecución de orden usuario={user_id} exchange={exchange} ({exc})")
 
@@ -448,6 +753,14 @@ def main():
 
         if due:
             alerts_to_send = [p["event"] for p in due]
+            # Usa el precio del primer evento pendiente como referencia para evaluar umbrales
+            try:
+                current_price = _price_from_event(alerts_to_send[0]) if alerts_to_send else None
+                if current_price:
+                    ts_eval = alerts_to_send[0].get("timestamp", datetime.now(timezone.utc))
+                    alerts_to_send.extend(_evaluate_thresholds(current_price, ts_eval))
+            except Exception:
+                pass
             try:
                 send_alerts(alerts_to_send)
             except Exception as exc:
