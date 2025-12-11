@@ -28,7 +28,7 @@ TRADING_MIN_NOTIONAL = float(os.getenv("WATCHER_MIN_NOTIONAL_USDT", "20"))
 
 _executor: OrderExecutor | None = None
 _account_manager: AccountManager | None = None
-_last_order_direction: str | None = None
+_last_order_direction: dict[tuple[str, str], str] = {}
 _pending_signals: list[dict] = []
 _thresholds: list[dict] = []
 THRESHOLDS_PATH = Path("backtest/backtestTR/pending_thresholds.json")
@@ -624,9 +624,6 @@ def _submit_trade(event: dict) -> None:
         print(f"[WATCHER][WARN] No se pudo determinar dirección para trading: {exc}")
         return
     direction = (event.get("direction") or "").lower()
-    if direction and direction == (_last_order_direction or "").lower():
-        print(f"[WATCHER][INFO] Orden {direction} ya colocada; se ignora nueva señal.")
-        return
 
     price = _price_from_event(event)
     if price is None or price <= 0:
@@ -672,6 +669,11 @@ def _submit_trade(event: dict) -> None:
             if not _close_opposite_position(user_id, exchange, direction, symbol, price):
                 print(f"[WATCHER][WARN] No se pudo cerrar posición opuesta en {symbol}; se omite señal.")
                 continue
+        key_dir = (user_id, exchange)
+        last_dir = _last_order_direction.get(key_dir)
+        if direction and direction == (last_dir or "").lower():
+            print(f"[WATCHER][INFO] Orden {direction} ya colocada en {exchange}; se ignora señal.")
+            continue
         if _has_open_position_same_direction(user_id, exchange, direction, symbol):
             print(f"[WATCHER][INFO] Ya hay posición {direction} abierta en {symbol}; se omite señal.")
             continue
@@ -723,7 +725,7 @@ def _submit_trade(event: dict) -> None:
             except Exception:
                 pass
             if response.success:
-                _last_order_direction = direction
+                _last_order_direction[key_dir] = direction
                 # Registra umbrales fijos (-5% / +9%) para alertas de cierre
                 entry_used = float(response.avg_price or price)
                 _register_threshold(user_id, exchange, symbol, direction, entry_used)
