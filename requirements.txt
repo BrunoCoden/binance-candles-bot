@@ -16,3 +16,6 @@ pyyaml
 
 # Binance USDⓈ-M Futures (UMFutures)
 binance-futures-connector
+
+# dYdX v4
+dydx-v4-client

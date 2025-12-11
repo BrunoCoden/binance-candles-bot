@@ -592,7 +592,12 @@ def _submit_trade(event: dict) -> None:
         try:
             account = _account_manager.get_account(user_id) if _account_manager else None
             cred = account.get_exchange(exchange) if account else None
-            notional = cred.notional_usdt if cred else None
+            notional = None
+            if cred:
+                if exchange.lower() == "dydx":
+                    notional = cred.notional_usdc if cred.notional_usdc is not None else cred.notional_usdt
+                else:
+                    notional = cred.notional_usdt
         except Exception:
             notional = None
         try:
@@ -611,6 +616,8 @@ def _submit_trade(event: dict) -> None:
         except Exception:
             sl_price = None
         symbol = event.get("symbol") or SYMBOL_DISPLAY.replace(".P", "")
+        if cred and cred.extra:
+            symbol = cred.extra.get("symbol", symbol)
         had_opposite = _has_opposite_position(user_id, exchange, direction, symbol)
         # Si hay posición opuesta, envía cierre reduceOnly y entrada simultánea en el mismo precio.
         # Se mantienen TP/SL previos hasta que el cierre se ejecute.
@@ -629,6 +636,7 @@ def _submit_trade(event: dict) -> None:
             "exchange": exchange,
             "tp": tp_price,
             "sl": sl_price,
+            "margin_mode": getattr(cred, "margin_mode", None) if cred else None,
             # Cuando había posición opuesta, evitamos cancelar TP/SL previos hasta que cierre.
             "skip_bracket": had_opposite,
         }
