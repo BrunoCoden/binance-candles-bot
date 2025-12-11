@@ -11,7 +11,7 @@ from alerts import generate_alerts, send_alerts, format_alert_message
 from trade_logger import send_trade_notification, format_timestamp
 from velas import SYMBOL_DISPLAY, STREAM_INTERVAL
 from trading.accounts.manager import AccountManager
-from trading.accounts.models import ExchangeEnvironment
+from trading.accounts.models import ExchangeEnvironment, ExchangeCredential
 from trading.orders.executor import OrderExecutor
 from trading.orders.models import OrderRequest, OrderSide, OrderType, TimeInForce
 
@@ -235,19 +235,42 @@ def _current_position(user_id: str, exchange: str, symbol: str) -> float:
     Solo implementado para binance; si falla devuelve 0.
     """
     try:
-        if exchange.lower() != "binance" or _account_manager is None:
+        if _account_manager is None:
             return 0.0
         account = _account_manager.get_account(user_id)
         cred = account.get_exchange(exchange)
-        api_key, api_secret = cred.resolve_keys(os.environ)
-        base_url = "https://testnet.binancefuture.com" if cred.environment == ExchangeEnvironment.TESTNET else None
-        client = UMFutures(key=api_key, secret=api_secret, base_url=base_url) if base_url else UMFutures(
-            key=api_key, secret=api_secret
-        )
-        pos = client.get_position_risk(symbol=symbol)
-        if not pos:
-            return 0.0
-        return float(pos[0].get("positionAmt") or 0.0)
+        if exchange.lower() == "binance":
+            api_key, api_secret = cred.resolve_keys(os.environ)
+            base_url = "https://testnet.binancefuture.com" if cred.environment == ExchangeEnvironment.TESTNET else None
+            client = UMFutures(key=api_key, secret=api_secret, base_url=base_url) if base_url else UMFutures(
+                key=api_key, secret=api_secret
+            )
+            pos = client.get_position_risk(symbol=symbol)
+            if not pos:
+                return 0.0
+            return float(pos[0].get("positionAmt") or 0.0)
+        elif exchange.lower() == "dydx":
+            from dydx_v4_client.client import Client as DydxClient
+
+            api_key, api_secret = cred.resolve_keys(os.environ)
+            passphrase = cred.resolve_optional(os.environ, cred.passphrase_env)
+            stark_key = cred.resolve_optional(os.environ, cred.stark_key_env)
+            host = "https://api.dydx.exchange" if cred.environment == ExchangeEnvironment.LIVE else "https://testnet.dydx.exchange"
+            client = DydxClient(
+                api_key=api_key,
+                api_secret=api_secret,
+                passphrase=passphrase,
+                host=host,
+                stark_private_key=stark_key,
+                subaccount_number=0,
+            )
+            res = client.private.get_positions(market=symbol)
+            positions = res.get("positions") if isinstance(res, dict) else []
+            if not positions:
+                return 0.0
+            size = float(positions[0].get("size") or 0.0)
+            return size
+        return 0.0
     except Exception:
         return 0.0
 
@@ -257,29 +280,55 @@ def _close_position(user_id: str, exchange: str, symbol: str, direction: str) ->
     Cierra posición completa usando orden reduceOnly MARKET.
     direction: sentido de la posición actual ('long' -> vender, 'short' -> comprar)
     """
-    if exchange.lower() != "binance" or _account_manager is None:
+    if _account_manager is None:
         return False
     try:
         account = _account_manager.get_account(user_id)
         cred = account.get_exchange(exchange)
-        api_key, api_secret = cred.resolve_keys(os.environ)
-        base_url = "https://testnet.binancefuture.com" if cred.environment == ExchangeEnvironment.TESTNET else None
-        client = UMFutures(key=api_key, secret=api_secret, base_url=base_url) if base_url else UMFutures(
-            key=api_key, secret=api_secret
-        )
         pos_amt = _current_position(user_id, exchange, symbol)
         if pos_amt == 0:
             return False
         qty = abs(pos_amt)
-        side = "SELL" if pos_amt > 0 else "BUY"
-        client.new_order(
-            symbol=symbol,
-            side=side,
-            type="MARKET",
-            quantity=f"{qty:.3f}",
-            reduceOnly="true",
-        )
-        print(f"[WATCHER][INFO] Cierre reduceOnly MARKET user={user_id} ex={exchange} symbol={symbol} qty={qty} side={side}")
+        if exchange.lower() == "binance":
+            api_key, api_secret = cred.resolve_keys(os.environ)
+            base_url = "https://testnet.binancefuture.com" if cred.environment == ExchangeEnvironment.TESTNET else None
+            client = UMFutures(key=api_key, secret=api_secret, base_url=base_url) if base_url else UMFutures(
+                key=api_key, secret=api_secret
+            )
+            side = "SELL" if pos_amt > 0 else "BUY"
+            client.new_order(
+                symbol=symbol,
+                side=side,
+                type="MARKET",
+                quantity=f"{qty:.3f}",
+                reduceOnly="true",
+            )
+        elif exchange.lower() == "dydx":
+            from dydx_v4_client.client import Client as DydxClient
+
+            api_key, api_secret = cred.resolve_keys(os.environ)
+            passphrase = cred.resolve_optional(os.environ, cred.passphrase_env)
+            stark_key = cred.resolve_optional(os.environ, cred.stark_key_env)
+            host = "https://api.dydx.exchange" if cred.environment == ExchangeEnvironment.LIVE else "https://testnet.dydx.exchange"
+            client = DydxClient(
+                api_key=api_key,
+                api_secret=api_secret,
+                passphrase=passphrase,
+                host=host,
+                stark_private_key=stark_key,
+                subaccount_number=0,
+            )
+            side = "BUY" if pos_amt < 0 else "SELL"
+            client.private.create_order(
+                market=symbol,
+                side=side,
+                type="MARKET",
+                size=f\"{qty:.6f}\",
+                reduceOnly=True,
+            )
+        else:
+            return False
+        print(f\"[WATCHER][INFO] Cierre reduceOnly MARKET user={user_id} ex={exchange} symbol={symbol} qty={qty} side={side}\")
         return True
     except Exception as exc:
         print(f"[WATCHER][WARN] No se pudo cerrar posición user={user_id} ex={exchange}: {exc}")
@@ -361,19 +410,11 @@ def _has_open_position_same_direction(user_id: str, exchange: str, direction: st
     Solo aplica a binance; si falla la consulta no bloquea (retorna False).
     """
     try:
-        if exchange.lower() != "binance" or _account_manager is None:
+        if _account_manager is None:
             return False
         account = _account_manager.get_account(user_id)
         cred = account.get_exchange(exchange)
-        api_key, api_secret = cred.resolve_keys(os.environ)
-        base_url = "https://testnet.binancefuture.com" if cred.environment == ExchangeEnvironment.TESTNET else None
-        client = UMFutures(key=api_key, secret=api_secret, base_url=base_url) if base_url else UMFutures(
-            key=api_key, secret=api_secret
-        )
-        pos = client.get_position_risk(symbol=symbol)
-        if not pos:
-            return False
-        pos_amt = float(pos[0].get("positionAmt") or 0)
+        pos_amt = _current_position(user_id, exchange, symbol)
         if direction == "long" and pos_amt > 0:
             return True
         if direction == "short" and pos_amt < 0:
@@ -389,19 +430,11 @@ def _has_opposite_position(user_id: str, exchange: str, direction: str, symbol: 
     True si hay posición abierta en el sentido contrario.
     """
     try:
-        if exchange.lower() != "binance" or _account_manager is None:
+        if _account_manager is None:
             return False
         account = _account_manager.get_account(user_id)
         cred = account.get_exchange(exchange)
-        api_key, api_secret = cred.resolve_keys(os.environ)
-        base_url = "https://testnet.binancefuture.com" if cred.environment == ExchangeEnvironment.TESTNET else None
-        client = UMFutures(key=api_key, secret=api_secret, base_url=base_url) if base_url else UMFutures(
-            key=api_key, secret=api_secret
-        )
-        pos = client.get_position_risk(symbol=symbol)
-        if not pos:
-            return False
-        pos_amt = float(pos[0].get("positionAmt") or 0)
+        pos_amt = _current_position(user_id, exchange, symbol)
         if direction == "long" and pos_amt < 0:
             return True
         if direction == "short" and pos_amt > 0:
@@ -452,20 +485,11 @@ def _close_opposite_position(user_id: str, exchange: str, direction: str, symbol
     Devuelve True si no hay opuesta o si se pudo enviar el cierre.
     """
     try:
-        if exchange.lower() != "binance" or _account_manager is None:
+        if _account_manager is None:
             return True
         account = _account_manager.get_account(user_id)
         cred = account.get_exchange(exchange)
-        api_key, api_secret = cred.resolve_keys(os.environ)
-        base_url = "https://testnet.binancefuture.com" if cred.environment == ExchangeEnvironment.TESTNET else None
-        client = UMFutures(key=api_key, secret=api_secret, base_url=base_url) if base_url else UMFutures(
-            key=api_key, secret=api_secret
-        )
-        # Si no hay posición, no tocamos TP/SL (ya no existen o no hay riesgo)
-        pos = client.get_position_risk(symbol=symbol)
-        if not pos:
-            return True
-        pos_amt = float(pos[0].get("positionAmt") or 0)
+        pos_amt = _current_position(user_id, exchange, symbol)
         if pos_amt == 0:
             return True
         # Chequear si es opuesto
@@ -476,7 +500,12 @@ def _close_opposite_position(user_id: str, exchange: str, direction: str, symbol
         qty = abs(pos_amt)
         # Ejecuta cierre reduceOnly MARKET
         side = "BUY" if pos_amt < 0 else "SELL"
-        try:
+        if exchange.lower() == "binance":
+            api_key, api_secret = cred.resolve_keys(os.environ)
+            base_url = "https://testnet.binancefuture.com" if cred.environment == ExchangeEnvironment.TESTNET else None
+            client = UMFutures(key=api_key, secret=api_secret, base_url=base_url) if base_url else UMFutures(
+                key=api_key, secret=api_secret
+            )
             client.new_order(
                 symbol=symbol,
                 side=side,
@@ -484,14 +513,32 @@ def _close_opposite_position(user_id: str, exchange: str, direction: str, symbol
                 quantity=f"{qty:.3f}",
                 reduceOnly="true",
             )
-            print(
-                f"[WATCHER][INFO] Cierre reduceOnly (MARKET) de posición opuesta qty={qty} side={side} "
-                f"en {symbol}"
+        elif exchange.lower() == "dydx":
+            from dydx_v4_client.client import Client as DydxClient
+
+            api_key, api_secret = cred.resolve_keys(os.environ)
+            passphrase = cred.resolve_optional(os.environ, cred.passphrase_env)
+            stark_key = cred.resolve_optional(os.environ, cred.stark_key_env)
+            host = "https://api.dydx.exchange" if cred.environment == ExchangeEnvironment.LIVE else "https://testnet.dydx.exchange"
+            client = DydxClient(
+                api_key=api_key,
+                api_secret=api_secret,
+                passphrase=passphrase,
+                host=host,
+                stark_private_key=stark_key,
+                subaccount_number=0,
             )
-            return True
-        except Exception as exc:  # pragma: no cover - externo
-            print(f"[WATCHER][ERROR] No se pudo cerrar posición opuesta ({exc})")
-            return False
+            client.private.create_order(
+                market=symbol,
+                side=side,
+                type="MARKET",
+                size=f\"{qty:.6f}\",
+                reduceOnly=True,
+            )
+        print(
+            f\"[WATCHER][INFO] Cierre reduceOnly (MARKET) de posición opuesta qty={qty} side={side} en {symbol} ex={exchange}\"
+        )
+        return True
     except Exception as exc:  # pragma: no cover - externo
         print(f"[WATCHER][WARN] No se pudo verificar/cerrar posición opuesta: {exc}")
         return False
@@ -628,6 +675,20 @@ def _submit_trade(event: dict) -> None:
         if _has_open_position_same_direction(user_id, exchange, direction, symbol):
             print(f"[WATCHER][INFO] Ya hay posición {direction} abierta en {symbol}; se omite señal.")
             continue
+
+        # Chequeo de tope de posición si se configuró
+        try:
+            if cred and cred.max_position_usdc and price:
+                pos_amt = _current_position(user_id, exchange, symbol)
+                current_notional = abs(pos_amt) * price
+                next_notional = quantity * price
+                if current_notional + next_notional > cred.max_position_usdc:
+                    print(
+                        f"[WATCHER][INFO] Tope de posición excedido ({current_notional + next_notional:.2f} > {cred.max_position_usdc}); se omite señal."
+                    )
+                    continue
+        except Exception:
+            pass
 
         extra = {
             "source_event": event.get("type", "unknown"),
