@@ -151,6 +151,7 @@
             <th>Label</th>
             <th>Estado</th>
             <th>Exchange</th>
+            <th>Par</th>
             <th></th>
           </tr>
         </thead>
@@ -196,8 +197,7 @@
           <label>Exchange
             <select id="ex-name">
               <option value="binance">binance</option>
-              <option value="bybit">bybit</option>
-              <option value="okx">okx</option>
+              <option value="dydx">dydx</option>
             </select>
           </label>
           <label>Entorno
@@ -214,6 +214,20 @@
           <label>API SECRET env
             <input id="ex-secret" placeholder="EJ: USER1_BINANCE_SECRET" required />
           </label>
+          <label id="wrap-passphrase" style="display:none;">Passphrase env (dYdX)
+            <input id="ex-passphrase" placeholder="EJ: USER1_DYDX_PASSPHRASE" />
+          </label>
+          <label id="wrap-stark" style="display:none;">Stark key env (dYdX)
+            <input id="ex-stark" placeholder="EJ: USER1_DYDX_STARK" />
+          </label>
+        </div>
+        <div class="row">
+          <label>API KEY (texto)
+            <input id="ex-key-plain" placeholder="Pegá la key aquí" />
+          </label>
+          <label>API SECRET (texto)
+            <input id="ex-secret-plain" placeholder="Pegá el secret aquí" />
+          </label>
         </div>
         <div class="row">
           <label>Notional por trade (USDT)
@@ -221,6 +235,23 @@
           </label>
           <label>Apalancamiento
             <input id="ex-leverage" type="number" step="1" min="1" placeholder="5" />
+          </label>
+          <label>Par (símbolo)
+            <input id="ex-symbol" placeholder="ETHUSDT" required />
+          </label>
+        </div>
+        <div class="row">
+          <label id="wrap-notional-usdc" style="display:none;">Notional por trade (USDC, dYdX)
+            <input id="ex-notional-usdc" type="number" step="0.01" min="0" placeholder="100" />
+          </label>
+          <label id="wrap-maxpos-usdc" style="display:none;">Max posición (USDC, dYdX)
+            <input id="ex-maxpos-usdc" type="number" step="0.01" min="0" placeholder="500" />
+          </label>
+          <label id="wrap-margin-mode" style="display:none;">Modo margen
+            <select id="ex-margin-mode">
+              <option value="isolated">isolated</option>
+              <option value="cross">cross</option>
+            </select>
           </label>
         </div>
         <label>Extra (JSON opcional)
@@ -248,9 +279,22 @@
     const exEnv = document.getElementById("ex-env");
     const exKey = document.getElementById("ex-key");
     const exSecret = document.getElementById("ex-secret");
+    const exKeyPlain = document.getElementById("ex-key-plain");
+    const exSecretPlain = document.getElementById("ex-secret-plain");
     const exNotional = document.getElementById("ex-notional");
     const exLeverage = document.getElementById("ex-leverage");
+    const exSymbol = document.getElementById("ex-symbol");
     const exExtra = document.getElementById("ex-extra");
+    const exPassphrase = document.getElementById("ex-passphrase");
+    const exStark = document.getElementById("ex-stark");
+    const exNotionalUsdc = document.getElementById("ex-notional-usdc");
+    const exMaxPosUsdc = document.getElementById("ex-maxpos-usdc");
+    const exMarginMode = document.getElementById("ex-margin-mode");
+    const wrapPassphrase = document.getElementById("wrap-passphrase");
+    const wrapStark = document.getElementById("wrap-stark");
+    const wrapNotionalUsdc = document.getElementById("wrap-notional-usdc");
+    const wrapMaxPosUsdc = document.getElementById("wrap-maxpos-usdc");
+    const wrapMarginMode = document.getElementById("wrap-margin-mode");
     const accPathLabel = document.getElementById("accounts-path");
 
     function showStatus(msg, type = "info") {
@@ -260,6 +304,13 @@
       statusEl.classList.toggle("success", type === "success");
     }
     function clearStatus() { statusEl.className = "status"; statusEl.textContent = ""; }
+
+    function toggleDydxFields(name) {
+      const isDydx = name === "dydx";
+      [wrapPassphrase, wrapStark, wrapNotionalUsdc, wrapMaxPosUsdc, wrapMarginMode].forEach((el) => {
+        if (el) el.style.display = isDydx ? "block" : "none";
+      });
+    }
 
     async function api(path, options = {}) {
       const opts = { ...options };
@@ -290,6 +341,7 @@
           <td>${u.label || "-"}</td>
           <td><span class="tag ${u.enabled ? "on" : "off"}">${u.enabled ? "ON" : "OFF"}</span></td>
           <td>${ex ? `${ex.exchange} <span class="tag env">${ex.environment}</span>` : "-"}</td>
+          <td>${ex && ex.symbol ? ex.symbol : "-"}</td>
         `;
         const actions = document.createElement("td");
         actions.className = "actions-cell";
@@ -330,17 +382,26 @@
       accEnabled.value = u.enabled ? "true" : "false";
       accMetadata.value = u.metadata && Object.keys(u.metadata).length ? JSON.stringify(u.metadata, null, 2) : "";
       showStatus(`Editando ${id}`, "info");
-      if (u.exchanges && u.exchanges[0]) {
-        const ex = u.exchanges[0];
-        exUser.value = u.id;
-        exName.value = ex.exchange;
-        exEnv.value = ex.environment;
-        exKey.value = ex.api_key_env || "";
-        exSecret.value = ex.api_secret_env || "";
-        exNotional.value = ex.notional_usdt ?? "";
-        exLeverage.value = ex.leverage ?? "";
-        exExtra.value = ex.extra && Object.keys(ex.extra).length ? JSON.stringify(ex.extra, null, 2) : "";
-      }
+        if (u.exchanges && u.exchanges[0]) {
+          const ex = u.exchanges[0];
+          exUser.value = u.id;
+          exName.value = ex.exchange;
+          exEnv.value = ex.environment;
+          exKey.value = ex.api_key_env || "";
+          exSecret.value = ex.api_secret_env || "";
+          exKeyPlain.value = "";
+          exSecretPlain.value = "";
+          exNotional.value = ex.notional_usdt ?? "";
+          exNotionalUsdc.value = ex.notional_usdc ?? "";
+          exMaxPosUsdc.value = ex.max_position_usdc ?? "";
+          exMarginMode.value = ex.margin_mode || "isolated";
+          exPassphrase.value = ex.passphrase_env || "";
+          exStark.value = ex.stark_key_env || "";
+          exLeverage.value = ex.leverage ?? "";
+          exSymbol.value = ex.symbol || "";
+          exExtra.value = ex.extra && Object.keys(ex.extra).length ? JSON.stringify(ex.extra, null, 2) : "";
+          toggleDydxFields(exName.value);
+        }
     }
 
     function resetAccountForm() {
@@ -357,9 +418,18 @@
       exEnv.value = "testnet";
       exKey.value = "";
       exSecret.value = "";
+      exKeyPlain.value = "";
+      exSecretPlain.value = "";
       exNotional.value = "";
+      exNotionalUsdc.value = "";
+      exMaxPosUsdc.value = "";
+      exMarginMode.value = "isolated";
+      exPassphrase.value = "";
+      exStark.value = "";
       exLeverage.value = "";
+      exSymbol.value = "";
       exExtra.value = "";
+      toggleDydxFields(exName.value);
     }
 
     async function toggleUser(id, enabled) {
@@ -383,25 +453,53 @@
         metadata,
       };
       if (!body.id) { showStatus("ID obligatorio", "error"); return; }
-      const exchangePayload = {
-        exchange: exName.value,
-        environment: exEnv.value,
-        api_key_env: exKey.value.trim(),
-        api_secret_env: exSecret.value.trim(),
-        notional_usdt: exNotional.value ? Number(exNotional.value) : null,
-        leverage: exLeverage.value ? Number(exLeverage.value) : null,
-        extra: parseJsonSafe(exExtra.value),
-      };
+      const symbolVal = exSymbol.value.trim();
+      let exchangePayload = null;
+      if (
+        symbolVal ||
+        exKey.value.trim() ||
+        exSecret.value.trim() ||
+        exNotional.value ||
+        exNotionalUsdc.value ||
+        exMaxPosUsdc.value ||
+        exPassphrase.value.trim() ||
+        exStark.value.trim() ||
+        exLeverage.value ||
+        exExtra.value.trim() ||
+        exKeyPlain.value.trim() ||
+        exSecretPlain.value.trim()
+      ) {
+        if (!symbolVal) { showStatus("Par (símbolo) obligatorio para guardar exchange", "error"); return; }
+        exchangePayload = {
+          exchange: exName.value,
+          environment: exEnv.value,
+          api_key_env: exKey.value.trim(),
+          api_secret_env: exSecret.value.trim(),
+          api_key_plain: exKeyPlain.value.trim(),
+          api_secret_plain: exSecretPlain.value.trim(),
+          notional_usdt: exNotional.value ? Number(exNotional.value) : null,
+          notional_usdc: exNotionalUsdc.value ? Number(exNotionalUsdc.value) : null,
+          max_position_usdc: exMaxPosUsdc.value ? Number(exMaxPosUsdc.value) : null,
+          passphrase_env: exPassphrase.value.trim() || null,
+          stark_key_env: exStark.value.trim() || null,
+          margin_mode: exMarginMode.value || null,
+          leverage: exLeverage.value ? Number(exLeverage.value) : null,
+          symbol: symbolVal.toUpperCase(),
+          extra: parseJsonSafe(exExtra.value),
+        };
+      }
       try {
         if (state.editingId) {
           await api(`/api/accounts/${encodeURIComponent(state.editingId)}`, { method: "PUT", body });
           showStatus(`Cuenta ${body.id} actualizada`, "success");
           state.lastSavedId = body.id;
-          // Actualiza exchange con el mismo submit
-          await api(`/api/accounts/${encodeURIComponent(body.id)}/exchange`, { method: "PUT", body: exchangePayload });
+          // Actualiza exchange si se completó el payload
+          if (exchangePayload) {
+            await api(`/api/accounts/${encodeURIComponent(body.id)}/exchange`, { method: "PUT", body: exchangePayload });
+          }
         } else {
-          // para crear se requiere exchange: lo tomamos del formulario de exchange
-          body.exchange = exchangePayload;
+          // para crear, exchange es opcional
+          if (exchangePayload) body.exchange = exchangePayload;
           await api("/api/accounts", { method: "POST", body });
           showStatus(`Cuenta ${body.id} creada`, "success");
           state.lastSavedId = body.id;
@@ -417,13 +515,17 @@
       let extra = {};
       try { extra = parseJsonSafe(exExtra.value); }
       catch (err) { showStatus(err.message, "error"); return; }
+      if (!exSymbol.value.trim()) { showStatus("Par (símbolo) obligatorio", "error"); return; }
       const body = {
         exchange: exName.value,
         environment: exEnv.value,
         api_key_env: exKey.value.trim(),
         api_secret_env: exSecret.value.trim(),
+        api_key_plain: exKeyPlain.value.trim(),
+        api_secret_plain: exSecretPlain.value.trim(),
         notional_usdt: exNotional.value ? Number(exNotional.value) : null,
         leverage: exLeverage.value ? Number(exLeverage.value) : null,
+        symbol: exSymbol.value.trim().toUpperCase(),
         extra,
       };
       try {
@@ -460,3 +562,13 @@
   </script>
 </body>
 </html>
+    const exPassphrase = document.getElementById("ex-passphrase");
+    const exStark = document.getElementById("ex-stark");
+    const exNotionalUsdc = document.getElementById("ex-notional-usdc");
+    const exMaxPosUsdc = document.getElementById("ex-maxpos-usdc");
+    const exMarginMode = document.getElementById("ex-margin-mode");
+    const wrapPassphrase = document.getElementById("wrap-passphrase");
+    const wrapStark = document.getElementById("wrap-stark");
+    const wrapNotionalUsdc = document.getElementById("wrap-notional-usdc");
+    const wrapMaxPosUsdc = document.getElementById("wrap-maxpos-usdc");
+    const wrapMarginMode = document.getElementById("wrap-margin-mode");
