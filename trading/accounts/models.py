@@ -19,6 +19,12 @@ class ExchangeCredential:
     notional_usdt: float | None = None
     leverage: int | None = None
     extra: Dict[str, Any] = field(default_factory=dict)
+    # dYdX v4 soporte: passphrase/stark keys y notional USDC / max position
+    passphrase_env: str | None = None
+    stark_key_env: str | None = None
+    notional_usdc: float | None = None
+    max_position_usdc: float | None = None
+    margin_mode: str | None = None  # 'isolated' o 'cross' (dYdX soporta isolated markets)
 
     def resolve_keys(self, env: Mapping[str, str]) -> tuple[str, str]:
         api_key = env.get(self.api_key_env)
@@ -29,6 +35,11 @@ class ExchangeCredential:
                 f"{self.api_key_env}/{self.api_secret_env}"
             )
         return api_key, api_secret
+
+    def resolve_optional(self, env: Mapping[str, str], key: str | None) -> str | None:
+        if key is None:
+            return None
+        return env.get(key) or None
 
 
 @dataclass(slots=True)
