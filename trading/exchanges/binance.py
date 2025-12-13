@@ -195,26 +195,9 @@ class BinanceClient(ExchangeClient):
             avg_price = float(response.get("avgPrice") or order.price or 0.0)
             tp = order.extra_params.get("tp") if order.extra_params else None
             sl = order.extra_params.get("sl") if order.extra_params else None
-            skip_bracket = bool(order.extra_params.get("skip_bracket")) if order.extra_params else False
+            # Binance rechaza TP/SL con el endpoint estándar (error -4120). Deshabilitamos brackets
+            # y delegamos los cierres al watcher (cierres MARKET por ±5%/±9%).
             bracket_raw: Dict[str, Any] = {}
-            # Solo gestionar TP/SL si corresponde: no lo hacemos en reduceOnly, ni cuando se pide skip_bracket.
-            if (tp or sl) and not order.reduce_only and not skip_bracket:
-                try:
-                    # Cancela brackets previos y ajusta qty al tamaño esperado de la posición tras esta orden.
-                    canceled = self._cancel_open_reduce_only(client, order.symbol)
-                    current_pos = self._current_position_qty(client, order.symbol)
-                    signed_qty = order.quantity if order.side.value.upper() == "BUY" else -order.quantity
-                    expected_pos = current_pos + signed_qty
-                    bracket_qty = abs(expected_pos) if expected_pos != 0 else order.quantity
-                    if bracket_qty <= 0:
-                        bracket_qty = order.quantity
-                    bracket_raw = {
-                        "canceled": canceled,
-                        **self._place_bracket(client, order.symbol, order.side.value, bracket_qty, tp, sl),
-                    }
-                except Exception as exc:  # pragma: no cover - externo
-                    logger.error("Error enviando TP/SL: %s", exc)
-                    bracket_raw = {"bracket_error": str(exc)}
             logger.info(
                 "Orden enviada (entry + bracket) symbol=%s side=%s qty=%s tp=%s sl=%s bracket=%s",
                 order.symbol,

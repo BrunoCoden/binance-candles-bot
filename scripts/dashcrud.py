@@ -9,11 +9,16 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Dict
 from urllib.parse import urlparse
+import shutil
+
+import requests
 
 # Asegura imports relativos al repo
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -25,6 +30,8 @@ from trading.accounts.models import AccountConfig, ExchangeCredential, ExchangeE
 
 DEFAULT_ACCOUNTS_PATH = Path("trading/accounts/oci_accounts.yaml")
 DEFAULT_HTML = REPO_ROOT / "trading/accounts/dashcrud.html"
+DEFAULT_ENV_PATH = Path(os.getenv("DASHCRUD_ENV_PATH", "/etc/systemd/system/bot.env"))
+FALLBACK_SYMBOLS = {"binance": {"ETHUSDT", "BTCUSDT"}}
 
 
 def _load_manager(path: Path) -> AccountManager:
@@ -53,6 +60,7 @@ def _serialize(manager: AccountManager, accounts_path: Path) -> dict:
                     "api_secret_env": cred.get("api_secret_env"),
                     "notional_usdt": cred.get("notional_usdt"),
                     "leverage": cred.get("leverage"),
+                    "symbol": (cred.get("extra") or {}).get("symbol"),
                     "extra": cred.get("extra") or {},
                 }
             )
@@ -68,7 +76,85 @@ def _serialize(manager: AccountManager, accounts_path: Path) -> dict:
     return {"accounts_path": str(accounts_path), "users": out}
 
 
-def _build_credential(payload: Dict[str, Any], default_name: str | None = None) -> ExchangeCredential:
+def _validate_symbol(exchange: str, environment: ExchangeEnvironment, symbol: str) -> None:
+    """
+    Valida el símbolo contra el exchange. Actualmente implementado para Binance UM Futures.
+    """
+    ex = exchange.lower()
+    sym = symbol.upper()
+    if ex == "binance":
+        base_url = "https://testnet.binancefuture.com" if environment == ExchangeEnvironment.TESTNET else "https://fapi.binance.com"
+        try:
+            resp = requests.get(f"{base_url}/fapi/v1/exchangeInfo", timeout=8)
+            resp.raise_for_status()
+            data = resp.json()
+            symbols = {
+                s["symbol"]
+                for s in data.get("symbols", [])
+                if s.get("status") == "TRADING" and s.get("contractType") == "PERPETUAL"
+            }
+            if sym not in symbols:
+                raise ValueError(f"El símbolo {sym} no está disponible en {exchange} ({environment.value}).")
+            return
+        except requests.RequestException as exc:
+            # Si hay fallback y coincide, lo aceptamos; de lo contrario, error.
+            if sym in FALLBACK_SYMBOLS.get(ex, set()):
+                return
+            raise ValueError(f"No se pudo validar el símbolo en {exchange}: {exc}")
+    # Otros exchanges: solo fallback si está cargado
+    if sym in FALLBACK_SYMBOLS.get(ex, set()):
+        return
+    raise ValueError(f"No se reconoce el exchange '{exchange}' o el símbolo {sym} no está permitido.")
+
+
+def _generate_env_names(user_id: str, exchange: str, environment: ExchangeEnvironment) -> tuple[str, str]:
+    base = f"{user_id}_{exchange}_{environment.value}".upper().replace("-", "_")
+    return f"{base}_API_KEY", f"{base}_API_SECRET"
+
+
+def _load_env_file(env_path: Path) -> list[str]:
+    if not env_path.exists():
+        return []
+    try:
+        return env_path.read_text(encoding="utf-8").splitlines()
+    except Exception:
+        return []
+
+
+def _save_env_file(env_path: Path, lines: list[str]) -> None:
+    env_path.parent.mkdir(parents=True, exist_ok=True)
+    content = "\n".join(lines) + "\n"
+    env_path.write_text(content, encoding="utf-8")
+
+
+def _set_env_vars(env_path: Path, mapping: Dict[str, str]) -> None:
+    """Actualiza/crea variables en el env file, con backup previo."""
+    if env_path.exists():
+        ts = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+        shutil.copy2(env_path, env_path.with_suffix(env_path.suffix + f".bak.{ts}"))
+
+    lines = _load_env_file(env_path)
+    out = []
+    seen = set()
+    for line in lines:
+        if not line or line.strip().startswith("#") or "=" not in line:
+            out.append(line)
+            continue
+        key, val = line.split("=", 1)
+        key = key.strip()
+        if key in mapping:
+            out.append(f"{key}={mapping[key]}")
+            seen.add(key)
+        else:
+            out.append(line)
+    # add missing keys
+    for k, v in mapping.items():
+        if k not in seen:
+            out.append(f"{k}={v}")
+    _save_env_file(env_path, out)
+
+
+def _build_credential(payload: Dict[str, Any], default_name: str | None = None, *, user_id: str | None = None, env_path: Path = DEFAULT_ENV_PATH) -> ExchangeCredential:
     name = (payload.get("exchange") or payload.get("name") or default_name or "").lower()
     if not name:
         raise ValueError("exchange es obligatorio.")
@@ -81,14 +167,30 @@ def _build_credential(payload: Dict[str, Any], default_name: str | None = None) 
 
     api_key_env = (payload.get("api_key_env") or "").strip()
     api_secret_env = (payload.get("api_secret_env") or "").strip()
+    api_key_plain = (payload.get("api_key_plain") or "").strip()
+    api_secret_plain = (payload.get("api_secret_plain") or "").strip()
+    if api_key_plain and api_secret_plain:
+        if not user_id:
+            raise ValueError("user_id es obligatorio para generar variables de entorno.")
+        gen_key, gen_secret = _generate_env_names(user_id, name, environment)
+        _set_env_vars(env_path, {gen_key: api_key_plain, gen_secret: api_secret_plain})
+        api_key_env, api_secret_env = gen_key, gen_secret
+
     if not api_key_env or not api_secret_env:
-        raise ValueError("api_key_env y api_secret_env son obligatorios.")
+        raise ValueError("api_key_env y api_secret_env son obligatorios (o provée keys en texto para generarlas).")
+
+    symbol = (payload.get("symbol") or payload.get("pair") or "").strip().upper()
+    if not symbol:
+        raise ValueError("symbol es obligatorio.")
+
+    _validate_symbol(name, environment, symbol)
 
     notional_val = payload.get("notional_usdt")
     leverage_val = payload.get("leverage")
     notional = float(notional_val) if notional_val not in (None, "", False) else None
     leverage = int(leverage_val) if leverage_val not in (None, "", False) else None
     extra = payload.get("extra") if isinstance(payload.get("extra"), dict) else {}
+    extra = {**extra, "symbol": symbol}
 
     return ExchangeCredential(
         exchange=name,
@@ -99,6 +201,14 @@ def _build_credential(payload: Dict[str, Any], default_name: str | None = None) 
         leverage=leverage,
         extra=extra,
     )
+
+
+def _save_with_backup(manager: AccountManager, path: Path) -> None:
+    if path.exists():
+        ts = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+        backup = path.with_suffix(path.suffix + f".bak.{ts}")
+        shutil.copy2(path, backup)
+    manager.save_to_file(path)
 
 
 class DashCRUDHandler(BaseHTTPRequestHandler):
@@ -189,16 +299,16 @@ class DashCRUDHandler(BaseHTTPRequestHandler):
             if user_id in {a.user_id for a in self.manager.list_accounts()}:
                 self._send_json(409, {"error": f"La cuenta '{user_id}' ya existe."})
                 return
-            # Exchange es obligatorio para crear
-            exchange_payload = payload.get("exchange") or {}
-            try:
-                cred = _build_credential(exchange_payload)
-            except ValueError as exc:
-                self._send_json(400, {"error": str(exc)})
-                return
             account = self.manager.upsert_account(user_id, label=label or None, metadata=metadata, enabled=enabled)
-            self.manager.upsert_exchange(user_id, cred)
-            self.manager.save_to_file(self.accounts_path)
+            exchange_payload = payload.get("exchange") or {}
+            if exchange_payload:
+                try:
+                    cred = _build_credential(exchange_payload, user_id=user_id, env_path=DEFAULT_ENV_PATH)
+                    self.manager.upsert_exchange(user_id, cred)
+                except ValueError as exc:
+                    self._send_json(400, {"error": str(exc)})
+                    return
+            _save_with_backup(self.manager, self.accounts_path)
             tmp_manager = AccountManager([account])
             self._send_json(201, _serialize(tmp_manager, self.accounts_path))
             return
@@ -243,7 +353,7 @@ class DashCRUDHandler(BaseHTTPRequestHandler):
                 metadata=metadata if isinstance(metadata, dict) else None,
                 enabled=enabled if enabled is not None else None,
             )
-            self.manager.save_to_file(self.accounts_path)
+            _save_with_backup(self.manager, self.accounts_path)
             self._send_json(200, self._snapshot())
             return
 
@@ -255,14 +365,14 @@ class DashCRUDHandler(BaseHTTPRequestHandler):
                 self._send_json(404, {"error": f"No existe la cuenta '{user_id}'."})
                 return
             try:
-                cred = _build_credential(payload, default_name=payload.get("exchange") or payload.get("name"))
+                cred = _build_credential(payload, default_name=payload.get("exchange") or payload.get("name"), user_id=user_id, env_path=DEFAULT_ENV_PATH)
             except ValueError as exc:
                 self._send_json(400, {"error": str(exc)})
                 return
             # Mantener un único exchange por usuario: se limpia y se inserta el nuevo.
             account.exchanges = {}
             self.manager.upsert_exchange(user_id, cred)
-            self.manager.save_to_file(self.accounts_path)
+            _save_with_backup(self.manager, self.accounts_path)
             self._send_json(200, self._snapshot())
             return
 
@@ -282,7 +392,7 @@ class DashCRUDHandler(BaseHTTPRequestHandler):
             return
         # Borrado lógico: enabled = False
         account.enabled = False
-        self.manager.save_to_file(self.accounts_path)
+        _save_with_backup(self.manager, self.accounts_path)
         self._send_json(200, self._snapshot())
 
 

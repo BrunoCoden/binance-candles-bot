@@ -26,6 +26,7 @@ _chat_ids_raw = os.getenv("TELEGRAM_CHAT_IDS", "")
 TELEGRAM_CHAT_IDS = [part.strip() for part in _chat_ids_raw.replace(";", ",").split(",") if part.strip()]
 SIGNAL_ALERTS_ENABLED = os.getenv("ALERT_ENABLE_BOLLINGER_SIGNALS", "false").lower() == "true"
 _last_direction: str | None = None
+_pending_break: dict | None = None  # Guarda rotura pendiente hasta que haya cierre de rebote
 
 LOCAL_TZ_NAME = os.getenv("TZ", "UTC")
 try:
@@ -80,26 +81,44 @@ def _bollinger_alert(bb_aligned: pd.DataFrame, ohlc_stream: pd.DataFrame):
     if any(np.isnan(val) for val in (close_now, close_prev, upper_now, upper_prev, lower_now, lower_prev)):
         return None
 
-    # Condiciones idénticas al Pine oficial:
-    #   - Long cuando el cierre cruza por encima de la banda inferior.
-    #   - Short cuando el cierre cruza por debajo de la banda superior.
-    crossed_lower = close_prev < lower_prev and close_now > lower_now
-    crossed_upper = close_prev > upper_prev and close_now < upper_now
-
     direction_filter = BB_DIRECTION
 
-    if crossed_lower and direction_filter != -1:
-        trend = "alcista"
-        direction = "long"
-        ref_price = lower_now
-        trigger_price = lower_now
-    elif crossed_upper and direction_filter != 1:
-        trend = "bajista"
-        direction = "short"
-        ref_price = upper_now
-        trigger_price = upper_now
-    else:
+    global _pending_break
+    trend = None
+    direction = None
+    ref_price = None
+    trigger_price = None
+
+    # Si hay una rotura pendiente, esperar rebote (cierre del lado opuesto de la banda)
+    if _pending_break:
+        pend_dir = _pending_break.get("direction")
+        if pend_dir == "long" and direction_filter != -1:
+            if close_now > lower_now:
+                trend = "alcista"
+                direction = "long"
+                ref_price = lower_now
+                trigger_price = lower_now
+                _pending_break = None
+        elif pend_dir == "short" and direction_filter != 1:
+            if close_now < upper_now:
+                trend = "bajista"
+                direction = "short"
+                ref_price = upper_now
+                trigger_price = upper_now
+                _pending_break = None
+        # Si no se cumplió el rebote, seguimos esperando (no devolvemos alerta aún)
+
+    # Si no hay alerta confirmada, registrar nuevas roturas
+    if trend is None:
+        # Rotura long: cierre por debajo de la banda inferior
+        if close_now < lower_now and direction_filter != -1:
+            _pending_break = {"direction": "long", "band": lower_now}
+        # Rotura short: cierre por encima de la banda superior
+        elif close_now > upper_now and direction_filter != 1:
+            _pending_break = {"direction": "short", "band": upper_now}
         return None
+
+    # Si llegamos aquí es porque se confirmó un rebote y se va a emitir señal
 
     stop_loss = None
     take_profit = None
@@ -135,6 +154,9 @@ def _bollinger_alert(bb_aligned: pd.DataFrame, ohlc_stream: pd.DataFrame):
         "volume": volume,
         "stop_loss": stop_loss,
         "take_profit": take_profit,
+        # Alias para TP/SL consumidos por watcher_alertas
+        "sl": stop_loss,
+        "tp": take_profit,
     }
 
 

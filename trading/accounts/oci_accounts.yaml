@@ -1,13 +1,27 @@
 users:
-  - id: bruno
-    label: Cuenta Bruno (live)
-    enabled: true
-    metadata: {}
-    exchanges:
-      binance:
-        api_key_env: BRUNO_BINANCE_API_KEY_LIVE
-        api_secret_env: BRUNO_BINANCE_API_SECRET_LIVE
-        environment: live
-        notional_usdt: 20
-        leverage: 1
-        extra: {}
+- id: bruno
+  label: Cuenta Bruno (live)
+  enabled: true
+  metadata: {}
+  exchanges:
+    binance:
+      exchange: binance
+      api_key_env: BRUNO_BINANCE_API_KEY_LIVE
+      api_secret_env: BRUNO_BINANCE_API_SECRET_LIVE
+      environment: live
+      notional_usdt: 20.0
+      leverage: 5
+      extra: {}
+- id: diego
+  label: Cuenta Diego(Live)
+  enabled: true
+  metadata: {}
+  exchanges:
+    binance:
+      exchange: binance
+      api_key_env: DIEGO_BINANCE_API_KEY_LIVE
+      api_secret_env: DIEGO_BINANCE_API_SECRET_LIVE
+      environment: live
+      notional_usdt: 100.0
+      leverage: 5
+      extra: {}

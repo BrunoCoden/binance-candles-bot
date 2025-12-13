@@ -323,12 +323,12 @@ def _close_position(user_id: str, exchange: str, symbol: str, direction: str) ->
                 market=symbol,
                 side=side,
                 type="MARKET",
-                size=f\"{qty:.6f}\",
+                size=f"{qty:.6f}",
                 reduceOnly=True,
             )
         else:
             return False
-        print(f\"[WATCHER][INFO] Cierre reduceOnly MARKET user={user_id} ex={exchange} symbol={symbol} qty={qty} side={side}\")
+        print(f"[WATCHER][INFO] Cierre reduceOnly MARKET user={user_id} ex={exchange} symbol={symbol} qty={qty} side={side}")
         return True
     except Exception as exc:
         print(f"[WATCHER][WARN] No se pudo cerrar posición user={user_id} ex={exchange}: {exc}")
@@ -532,11 +532,11 @@ def _close_opposite_position(user_id: str, exchange: str, direction: str, symbol
                 market=symbol,
                 side=side,
                 type="MARKET",
-                size=f\"{qty:.6f}\",
+                size=f"{qty:.6f}",
                 reduceOnly=True,
             )
         print(
-            f\"[WATCHER][INFO] Cierre reduceOnly (MARKET) de posición opuesta qty={qty} side={side} en {symbol} ex={exchange}\"
+            f"[WATCHER][INFO] Cierre reduceOnly (MARKET) de posición opuesta qty={qty} side={side} en {symbol} ex={exchange}"
         )
         return True
     except Exception as exc:  # pragma: no cover - externo
