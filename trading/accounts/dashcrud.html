@@ -582,8 +582,10 @@
     document.getElementById("acc-reset").addEventListener("click", resetAccountForm);
     document.getElementById("exchange-form").addEventListener("submit", handleExchangeSubmit);
     document.getElementById("ex-reset").addEventListener("click", resetExchangeForm);
+    exName.addEventListener("change", () => toggleDydxFields(exName.value));
 
     loadData();
+    toggleDydxFields(exName.value);
   </script>
 </body>
 </html>
