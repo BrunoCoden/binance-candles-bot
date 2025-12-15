@@ -444,27 +444,6 @@ def _has_opposite_position(user_id: str, exchange: str, direction: str, symbol: 
         return False
 
 
-def _cancel_reduce_only_open(client: UMFutures, symbol: str):
-    """
-    Cancela órdenes reduceOnly abiertas del símbolo (TP/SL previos).
-    """
-    try:
-        orders = client.get_all_orders(symbol=symbol, limit=200)
-    except Exception as exc:  # pragma: no cover - externo
-        print(f"[WATCHER][WARN] No se pudieron obtener órdenes para limpiar reduceOnly: {exc}")
-        return
-    for o in orders:
-        try:
-            if o.get("status") != "NEW":
-                continue
-            if not o.get("reduceOnly"):
-                continue
-            oid = o.get("orderId")
-            client.cancel_order(symbol=symbol, orderId=oid)
-        except Exception as exc:  # pragma: no cover - externo
-            print(f"[WATCHER][WARN] No se pudo cancelar reduceOnly {o.get('orderId')}: {exc}")
-
-
 def _interval_seconds(interval: str) -> int:
     unit = interval[-1].lower()
     value = int(interval[:-1])
@@ -544,71 +523,6 @@ def _close_opposite_position(user_id: str, exchange: str, direction: str, symbol
         return False
 
 
-def _sync_brackets(user_id: str, exchange: str, symbol: str, direction: str, tp: float | None, sl: float | None):
-    """
-    Recalibra TP/SL reduceOnly según la posición actual:
-    - Si posición = 0: cancela reduceOnly abiertos (limpieza).
-    - Si posición en el mismo sentido que direction: cancela reduceOnly y los recrea con el tamaño actual.
-    - Si posición contraria: no hace nada (mantiene protección previa).
-    """
-    if exchange.lower() != "binance" or _account_manager is None:
-        return
-    if tp is None and sl is None:
-        return
-    try:
-        account = _account_manager.get_account(user_id)
-        cred = account.get_exchange(exchange)
-        api_key, api_secret = cred.resolve_keys(os.environ)
-        base_url = "https://testnet.binancefuture.com" if cred.environment == ExchangeEnvironment.TESTNET else None
-        client = UMFutures(key=api_key, secret=api_secret, base_url=base_url) if base_url else UMFutures(
-            key=api_key, secret=api_secret
-        )
-        # Estado actual de la posición
-        pos = client.get_position_risk(symbol=symbol)
-        pos_amt = float(pos[0].get("positionAmt") or 0) if pos else 0.0
-        # Dirección de la posición actual
-        if pos_amt == 0:
-            _cancel_reduce_only_open(client, symbol)
-            return
-        if direction == "long" and pos_amt < 0:
-            # Opuesta: mantenemos TP/SL existentes
-            return
-        if direction == "short" and pos_amt > 0:
-            return
-        qty = abs(pos_amt)
-        # Limpia reduceOnly previos y recrea
-        _cancel_reduce_only_open(client, symbol)
-        side = "BUY" if pos_amt > 0 else "SELL"
-        try:
-            _ = client.new_order(
-                symbol=symbol,
-                side="SELL" if side == "BUY" else "BUY",
-                type="TAKE_PROFIT",
-                price=f"{tp:.1f}" if tp else None,
-                stopPrice=f"{tp:.1f}" if tp else None,
-                quantity=f"{qty:.3f}",
-                reduceOnly="true",
-                timeInForce="GTC",
-            ) if tp else None
-        except Exception as exc:
-            print(f"[WATCHER][WARN] Error recreando TP reduceOnly: {exc}")
-        try:
-            _ = client.new_order(
-                symbol=symbol,
-                side="SELL" if side == "BUY" else "BUY",
-                type="STOP",
-                price=f"{sl:.1f}" if sl else None,
-                stopPrice=f"{sl:.1f}" if sl else None,
-                quantity=f"{qty:.3f}",
-                reduceOnly="true",
-                timeInForce="GTC",
-            ) if sl else None
-        except Exception as exc:
-            print(f"[WATCHER][WARN] Error recreando SL reduceOnly: {exc}")
-    except Exception as exc:  # pragma: no cover - externo
-        print(f"[WATCHER][WARN] No se pudo sincronizar TP/SL: {exc}")
-
-
 def _submit_trade(event: dict) -> None:
     global _last_order_direction
     executor = _resolve_executor()
@@ -649,16 +563,6 @@ def _submit_trade(event: dict) -> None:
         except Exception as exc:
             print(f"[WATCHER][WARN] Cantidad inválida para trading ({exc}) usuario={user_id} exchange={exchange}")
             continue
-        tp_price = event.get("tp") or event.get("take_profit")
-        sl_price = event.get("sl") or event.get("stop_loss")
-        try:
-            tp_price = float(tp_price) if tp_price is not None else None
-        except Exception:
-            tp_price = None
-        try:
-            sl_price = float(sl_price) if sl_price is not None else None
-        except Exception:
-            sl_price = None
         symbol = event.get("symbol") or SYMBOL_DISPLAY.replace(".P", "")
         if cred and cred.extra:
             symbol = cred.extra.get("symbol", symbol)
@@ -697,11 +601,7 @@ def _submit_trade(event: dict) -> None:
             "event_timestamp": str(event.get("timestamp")),
             "account": user_id,
             "exchange": exchange,
-            "tp": tp_price,
-            "sl": sl_price,
             "margin_mode": getattr(cred, "margin_mode", None) if cred else None,
-            # Cuando había posición opuesta, evitamos cancelar TP/SL previos hasta que cierre.
-            "skip_bracket": had_opposite,
         }
         order = OrderRequest(
             symbol=symbol,
@@ -718,12 +618,6 @@ def _submit_trade(event: dict) -> None:
             print(
                 f"[WATCHER][TRADE] user={user_id} ex={exchange} success={response.success} status={response.status} raw={response.raw}"
             )
-            try:
-                bracket_raw = response.raw.get("bracket") if isinstance(response.raw, dict) else None
-                if bracket_raw is not None:
-                    print(f"[WATCHER][BRACKET] user={user_id} ex={exchange} bracket={bracket_raw}")
-            except Exception:
-                pass
             if response.success:
                 _last_order_direction[key_dir] = direction
                 # Registra umbrales fijos (-5% / +9%) para alertas de cierre

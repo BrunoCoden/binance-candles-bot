@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import math
 from decimal import Decimal, ROUND_DOWN
 from typing import Any, Dict, Optional, List
 
@@ -50,63 +49,6 @@ class BinanceClient(ExchangeClient):
         if order.price:
             params["price"] = _quantize(order.price, "0.1")
         return params
-
-    def _place_bracket(
-        self,
-        client: UMFutures,
-        symbol: str,
-        side: str,
-        quantity: float,
-        tp: float | None,
-        sl: float | None,
-    ) -> Dict[str, Any]:
-        """
-        Envía TP/SL como órdenes condicionadas de mercado con closePosition=true
-        (equivalente a reduceOnly) disparadas por MARK_PRICE.
-        """
-        results: Dict[str, Any] = {}
-
-        def _quant(v: float, step: str) -> str:
-            dv = Decimal(str(v)).quantize(Decimal(step), rounding=ROUND_DOWN)
-            if dv <= 0:
-                dv = Decimal(step)
-            return format(dv, "f")
-
-        qty_str = _quant(quantity, "0.001")
-        if tp and tp > 0:
-            try:
-                resp_tp = client.new_order(
-                    symbol=symbol,
-                    side="SELL" if side == "BUY" else "BUY",
-                    type="TAKE_PROFIT_MARKET",
-                    stopPrice=_quant(tp, "0.1"),
-                    workingType="MARK_PRICE",
-                    # closePosition hace que no abra posición nueva y cierre todo
-                    closePosition="true",
-                    timeInForce="GTC",
-                )
-                results["tp"] = resp_tp
-            except Exception as exc:  # pragma: no cover - externo
-                logger.error("Error enviando TP reduceOnly: %s", exc)
-                results["tp_error"] = str(exc)
-
-        if sl and sl > 0:
-            try:
-                resp_sl = client.new_order(
-                    symbol=symbol,
-                    side="SELL" if side == "BUY" else "BUY",
-                    type="STOP_MARKET",
-                    stopPrice=_quant(sl, "0.1"),
-                    workingType="MARK_PRICE",
-                    closePosition="true",
-                    timeInForce="GTC",
-                )
-                results["sl"] = resp_sl
-            except Exception as exc:  # pragma: no cover - externo
-                logger.error("Error enviando SL reduceOnly: %s", exc)
-                results["sl_error"] = str(exc)
-
-        return results
 
     def _current_position_qty(self, client: UMFutures, symbol: str) -> float:
         """
@@ -193,19 +135,12 @@ class BinanceClient(ExchangeClient):
             order_id = str(response.get("orderId") or "")
             filled_qty = float(response.get("executedQty") or 0.0)
             avg_price = float(response.get("avgPrice") or order.price or 0.0)
-            tp = order.extra_params.get("tp") if order.extra_params else None
-            sl = order.extra_params.get("sl") if order.extra_params else None
-            # Binance rechaza TP/SL con el endpoint estándar (error -4120). Deshabilitamos brackets
-            # y delegamos los cierres al watcher (cierres MARKET por ±5%/±9%).
-            bracket_raw: Dict[str, Any] = {}
             logger.info(
-                "Orden enviada (entry + bracket) symbol=%s side=%s qty=%s tp=%s sl=%s bracket=%s",
+                "Orden enviada (solo entry) symbol=%s side=%s qty=%s price=%s",
                 order.symbol,
                 order.side.value,
                 order.quantity,
-                tp,
-                sl,
-                bracket_raw,
+                order.price,
             )
             return OrderResponse(
                 success=True,
@@ -213,7 +148,7 @@ class BinanceClient(ExchangeClient):
                 exchange_order_id=order_id,
                 filled_quantity=filled_qty,
                 avg_price=avg_price,
-                raw={"entry": response, "bracket": bracket_raw},
+                raw={"entry": response},
             )
         except Exception as exc:
             logger.exception("Error enviando orden a Binance: %s", exc)

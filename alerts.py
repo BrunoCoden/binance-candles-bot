@@ -96,15 +96,21 @@ def _bollinger_alert(bb_aligned: pd.DataFrame, ohlc_stream: pd.DataFrame):
             if close_now > lower_now:
                 trend = "alcista"
                 direction = "long"
-                ref_price = lower_now
+                ref_price = lower_now  # banda de la vela de rebote
                 trigger_price = lower_now
+                print(
+                    f"[ALERT][PENDING] Consumida rotura pendiente LONG (rebote) band={lower_now:.2f} close={close_now:.2f} ts={last_idx}"
+                )
                 _pending_break = None
         elif pend_dir == "short" and direction_filter != 1:
             if close_now < upper_now:
                 trend = "bajista"
                 direction = "short"
-                ref_price = upper_now
+                ref_price = upper_now  # banda de la vela de rebote
                 trigger_price = upper_now
+                print(
+                    f"[ALERT][PENDING] Consumida rotura pendiente SHORT (rebote) band={upper_now:.2f} close={close_now:.2f} ts={last_idx}"
+                )
                 _pending_break = None
         # Si no se cumplió el rebote, seguimos esperando (no devolvemos alerta aún)
 
@@ -112,9 +118,23 @@ def _bollinger_alert(bb_aligned: pd.DataFrame, ohlc_stream: pd.DataFrame):
     if trend is None:
         # Rotura long: cierre por debajo de la banda inferior
         if close_now < lower_now and direction_filter != -1:
+            if _pending_break and _pending_break.get("direction") != "long":
+                print(
+                    f"[ALERT][PENDING] Reset por cambio de tendencia (prev={_pending_break}); nueva LONG ts={last_idx} band={lower_now:.2f} close={close_now:.2f}"
+                )
+            print(
+                f"[ALERT][PENDING] Set LONG ts={last_idx} band={lower_now:.2f} close={close_now:.2f} upper={upper_now:.2f} lower={lower_now:.2f}"
+            )
             _pending_break = {"direction": "long", "band": lower_now}
         # Rotura short: cierre por encima de la banda superior
         elif close_now > upper_now and direction_filter != 1:
+            if _pending_break and _pending_break.get("direction") != "short":
+                print(
+                    f"[ALERT][PENDING] Reset por cambio de tendencia (prev={_pending_break}); nueva SHORT ts={last_idx} band={upper_now:.2f} close={close_now:.2f}"
+                )
+            print(
+                f"[ALERT][PENDING] Set SHORT ts={last_idx} band={upper_now:.2f} close={close_now:.2f} upper={upper_now:.2f} lower={lower_now:.2f}"
+            )
             _pending_break = {"direction": "short", "band": upper_now}
         return None
 
