@@ -23,17 +23,18 @@ class DydxClientWrapper(ExchangeClient):
         api_key, api_secret = credential.resolve_keys(os.environ)
         passphrase = credential.resolve_optional(os.environ, credential.passphrase_env)
         stark_key = credential.resolve_optional(os.environ, credential.stark_key_env)
-        if not passphrase:
-            raise RuntimeError("Falta passphrase para dYdX (passphrase_env)")
         host = "https://api.dydx.exchange" if credential.environment == ExchangeEnvironment.LIVE else "https://testnet.dydx.exchange"
-        return DydxClient(
-            api_key=api_key,
-            api_secret=api_secret,
-            passphrase=passphrase,
-            host=host,
-            stark_private_key=stark_key,
-            subaccount_number=0,
-        )
+        kwargs: Dict[str, Any] = {
+            "api_key": api_key,  # API wallet address (permissioned key)
+            "api_secret": api_secret,  # private key (permissioned)
+            "host": host,
+            "subaccount_number": 0,
+        }
+        if passphrase:
+            kwargs["passphrase"] = passphrase
+        if stark_key:
+            kwargs["stark_private_key"] = stark_key
+        return DydxClient(**kwargs)
 
     @staticmethod
     def _quantize(value: float, step: str) -> str:

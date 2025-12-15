@@ -214,12 +214,6 @@
           <label>API SECRET env
             <input id="ex-secret" placeholder="EJ: USER1_BINANCE_SECRET" required />
           </label>
-          <label id="wrap-passphrase" style="display:none;">Passphrase env (dYdX)
-            <input id="ex-passphrase" placeholder="EJ: USER1_DYDX_PASSPHRASE" />
-          </label>
-          <label id="wrap-stark" style="display:none;">Stark key env (dYdX)
-            <input id="ex-stark" placeholder="EJ: USER1_DYDX_STARK" />
-          </label>
         </div>
         <div class="row">
           <label>API KEY (texto)
@@ -227,12 +221,6 @@
           </label>
           <label>API SECRET (texto)
             <input id="ex-secret-plain" placeholder="Pegá el secret aquí" />
-          </label>
-          <label id="wrap-passphrase-plain" style="display:none;">Passphrase (texto, dYdX)
-            <input id="ex-passphrase-plain" placeholder="Pegá la passphrase aquí" />
-          </label>
-          <label id="wrap-stark-plain" style="display:none;">Stark key (texto, dYdX)
-            <input id="ex-stark-plain" placeholder="Pegá la Stark key aquí" />
           </label>
         </div>
         <div class="row">
@@ -287,21 +275,17 @@
     const exSecret = document.getElementById("ex-secret");
     const exKeyPlain = document.getElementById("ex-key-plain");
     const exSecretPlain = document.getElementById("ex-secret-plain");
-    const exPassphrasePlain = document.getElementById("ex-passphrase-plain");
-    const exStarkPlain = document.getElementById("ex-stark-plain");
     const exNotional = document.getElementById("ex-notional");
     const exLeverage = document.getElementById("ex-leverage");
     const exSymbol = document.getElementById("ex-symbol");
     const exExtra = document.getElementById("ex-extra");
-    const exPassphrase = document.getElementById("ex-passphrase");
-    const exStark = document.getElementById("ex-stark");
     const exNotionalUsdc = document.getElementById("ex-notional-usdc");
     const exMaxPosUsdc = document.getElementById("ex-maxpos-usdc");
     const exMarginMode = document.getElementById("ex-margin-mode");
-    const wrapPassphrase = document.getElementById("wrap-passphrase");
-    const wrapStark = document.getElementById("wrap-stark");
-    const wrapPassphrasePlain = document.getElementById("wrap-passphrase-plain");
-    const wrapStarkPlain = document.getElementById("wrap-stark-plain");
+    const wrapPassphrase = null;
+    const wrapStark = null;
+    const wrapPassphrasePlain = null;
+    const wrapStarkPlain = null;
     const wrapNotionalUsdc = document.getElementById("wrap-notional-usdc");
     const wrapMaxPosUsdc = document.getElementById("wrap-maxpos-usdc");
     const wrapMarginMode = document.getElementById("wrap-margin-mode");
@@ -317,9 +301,21 @@
 
     function toggleDydxFields(name) {
       const isDydx = name === "dydx";
-      [wrapPassphrase, wrapStark, wrapPassphrasePlain, wrapStarkPlain, wrapNotionalUsdc, wrapMaxPosUsdc, wrapMarginMode].forEach((el) => {
+      [wrapNotionalUsdc, wrapMaxPosUsdc, wrapMarginMode].forEach((el) => {
         if (el) el.style.display = isDydx ? "block" : "none";
       });
+      // Ajusta placeholders para dYdX (wallet address + private key)
+      if (isDydx) {
+        exKey.placeholder = "API Wallet Address (dYdX)";
+        exSecret.placeholder = "Private key (dYdX)";
+        exKeyPlain.placeholder = "Pegá la wallet address (dYdX)";
+        exSecretPlain.placeholder = "Pegá la private key (dYdX)";
+      } else {
+        exKey.placeholder = "EJ: USER1_BINANCE_KEY";
+        exSecret.placeholder = "EJ: USER1_BINANCE_SECRET";
+        exKeyPlain.placeholder = "Pegá la key aquí";
+        exSecretPlain.placeholder = "Pegá el secret aquí";
+      }
     }
 
     async function api(path, options = {}) {
@@ -407,8 +403,6 @@
           exNotionalUsdc.value = ex.notional_usdc ?? "";
           exMaxPosUsdc.value = ex.max_position_usdc ?? "";
           exMarginMode.value = ex.margin_mode || "isolated";
-          exPassphrase.value = ex.passphrase_env || "";
-          exStark.value = ex.stark_key_env || "";
           exLeverage.value = ex.leverage ?? "";
           exSymbol.value = ex.symbol || "";
           exExtra.value = ex.extra && Object.keys(ex.extra).length ? JSON.stringify(ex.extra, null, 2) : "";
@@ -432,14 +426,10 @@
       exSecret.value = "";
       exKeyPlain.value = "";
       exSecretPlain.value = "";
-      exPassphrasePlain.value = "";
-      exStarkPlain.value = "";
       exNotional.value = "";
       exNotionalUsdc.value = "";
       exMaxPosUsdc.value = "";
       exMarginMode.value = "isolated";
-      exPassphrase.value = "";
-      exStark.value = "";
       exLeverage.value = "";
       exSymbol.value = "";
       exExtra.value = "";
@@ -476,10 +466,6 @@
         exNotional.value ||
         exNotionalUsdc.value ||
         exMaxPosUsdc.value ||
-        exPassphrase.value.trim() ||
-        exStark.value.trim() ||
-        exPassphrasePlain.value.trim() ||
-        exStarkPlain.value.trim() ||
         exLeverage.value ||
         exExtra.value.trim() ||
         exKeyPlain.value.trim() ||
@@ -493,10 +479,6 @@
           api_secret_env: exSecret.value.trim(),
           api_key_plain: exKeyPlain.value.trim(),
           api_secret_plain: exSecretPlain.value.trim(),
-          passphrase_env: exPassphrase.value.trim() || null,
-          passphrase_plain: exPassphrasePlain.value.trim() || null,
-          stark_key_env: exStark.value.trim() || null,
-          stark_key_plain: exStarkPlain.value.trim() || null,
           notional_usdt: exNotional.value ? Number(exNotional.value) : null,
           notional_usdc: exNotionalUsdc.value ? Number(exNotionalUsdc.value) : null,
           max_position_usdc: exMaxPosUsdc.value ? Number(exMaxPosUsdc.value) : null,
@@ -541,10 +523,6 @@
         api_secret_env: exSecret.value.trim(),
         api_key_plain: exKeyPlain.value.trim(),
         api_secret_plain: exSecretPlain.value.trim(),
-        passphrase_env: exPassphrase.value.trim() || null,
-        passphrase_plain: exPassphrasePlain.value.trim() || null,
-        stark_key_env: exStark.value.trim() || null,
-        stark_key_plain: exStarkPlain.value.trim() || null,
         notional_usdt: exNotional.value ? Number(exNotional.value) : null,
         notional_usdc: exNotionalUsdc.value ? Number(exNotionalUsdc.value) : null,
         max_position_usdc: exMaxPosUsdc.value ? Number(exMaxPosUsdc.value) : null,

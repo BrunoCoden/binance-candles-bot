@@ -174,10 +174,6 @@ def _build_credential(payload: Dict[str, Any], default_name: str | None = None, 
     api_secret_env = (payload.get("api_secret_env") or "").strip()
     api_key_plain = (payload.get("api_key_plain") or "").strip()
     api_secret_plain = (payload.get("api_secret_plain") or "").strip()
-    passphrase_env = (payload.get("passphrase_env") or "").strip()
-    passphrase_plain = (payload.get("passphrase_plain") or "").strip()
-    stark_key_env = (payload.get("stark_key_env") or "").strip()
-    stark_key_plain = (payload.get("stark_key_plain") or "").strip()
     if api_key_plain and api_secret_plain:
         if not user_id:
             raise ValueError("user_id es obligatorio para generar variables de entorno.")
@@ -201,21 +197,6 @@ def _build_credential(payload: Dict[str, Any], default_name: str | None = None, 
     extra = payload.get("extra") if isinstance(payload.get("extra"), dict) else {}
     extra = {**extra, "symbol": symbol}
 
-    # Si vienen passphrase/stark en claro, genera nombres default si faltan y guarda en env
-    env_updates: Dict[str, str] = {}
-    if passphrase_plain:
-        if not passphrase_env:
-            base = f"{(user_id or 'USER').upper()}_{name.upper()}_{environment.value.upper()}"
-            passphrase_env = f"{base}_PASSPHRASE"
-        env_updates[passphrase_env] = passphrase_plain
-    if stark_key_plain:
-        if not stark_key_env:
-            base = f"{(user_id or 'USER').upper()}_{name.upper()}_{environment.value.upper()}"
-            stark_key_env = f"{base}_STARK_KEY"
-        env_updates[stark_key_env] = stark_key_plain
-    if env_updates:
-        _set_env_vars(env_path, env_updates)
-
     return ExchangeCredential(
         exchange=name,
         api_key_env=api_key_env,
@@ -224,8 +205,6 @@ def _build_credential(payload: Dict[str, Any], default_name: str | None = None, 
         notional_usdt=notional,
         leverage=leverage,
         extra=extra,
-        passphrase_env=passphrase_env or None,
-        stark_key_env=stark_key_env or None,
     )
 
 
