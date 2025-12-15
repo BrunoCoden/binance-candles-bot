@@ -134,29 +134,32 @@ def _save_env_file(env_path: Path, lines: list[str]) -> None:
 
 def _set_env_vars(env_path: Path, mapping: Dict[str, str]) -> None:
     """Actualiza/crea variables en el env file, con backup previo."""
-    if env_path.exists():
-        ts = datetime.utcnow().strftime("%Y%m%d%H%M%S")
-        shutil.copy2(env_path, env_path.with_suffix(env_path.suffix + f".bak.{ts}"))
+    try:
+        if env_path.exists():
+            ts = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+            shutil.copy2(env_path, env_path.with_suffix(env_path.suffix + f".bak.{ts}"))
 
-    lines = _load_env_file(env_path)
-    out = []
-    seen = set()
-    for line in lines:
-        if not line or line.strip().startswith("#") or "=" not in line:
-            out.append(line)
-            continue
-        key, val = line.split("=", 1)
-        key = key.strip()
-        if key in mapping:
-            out.append(f"{key}={mapping[key]}")
-            seen.add(key)
-        else:
-            out.append(line)
-    # add missing keys
-    for k, v in mapping.items():
-        if k not in seen:
-            out.append(f"{k}={v}")
-    _save_env_file(env_path, out)
+        lines = _load_env_file(env_path)
+        out = []
+        seen = set()
+        for line in lines:
+            if not line or line.strip().startswith("#") or "=" not in line:
+                out.append(line)
+                continue
+            key, val = line.split("=", 1)
+            key = key.strip()
+            if key in mapping:
+                out.append(f"{key}={mapping[key]}")
+                seen.add(key)
+            else:
+                out.append(line)
+        # add missing keys
+        for k, v in mapping.items():
+            if k not in seen:
+                out.append(f"{k}={v}")
+        _save_env_file(env_path, out)
+    except PermissionError as exc:
+        raise RuntimeError(f"Sin permisos para escribir {env_path} (ejecuta DashCRUD con sudo o ajusta permisos).") from exc
 
 
 def _build_credential(payload: Dict[str, Any], default_name: str | None = None, *, user_id: str | None = None, env_path: Path = DEFAULT_ENV_PATH) -> ExchangeCredential:
@@ -382,7 +385,7 @@ class DashCRUDHandler(BaseHTTPRequestHandler):
                 return
             try:
                 cred = _build_credential(payload, default_name=payload.get("exchange") or payload.get("name"), user_id=user_id, env_path=DEFAULT_ENV_PATH)
-            except ValueError as exc:
+            except Exception as exc:  # noqa: BLE001
                 self._send_json(400, {"error": str(exc)})
                 return
             # Mantener un único exchange por usuario: se limpia y se inserta el nuevo.
