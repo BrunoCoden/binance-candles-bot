@@ -78,7 +78,10 @@ def _serialize(manager: AccountManager, accounts_path: Path) -> dict:
 
 def _validate_symbol(exchange: str, environment: ExchangeEnvironment, symbol: str) -> None:
     """
-    Valida el símbolo contra el exchange. Actualmente implementado para Binance UM Futures.
+    Valida el símbolo contra el exchange.
+    - Binance: consulta exchangeInfo.
+    - dYdX: se acepta sin validar contra la API (testnet/live difieren; se asume símbolo válido).
+    - Otros: usa fallback si está configurado.
     """
     ex = exchange.lower()
     sym = symbol.upper()
@@ -97,11 +100,12 @@ def _validate_symbol(exchange: str, environment: ExchangeEnvironment, symbol: st
                 raise ValueError(f"El símbolo {sym} no está disponible en {exchange} ({environment.value}).")
             return
         except requests.RequestException as exc:
-            # Si hay fallback y coincide, lo aceptamos; de lo contrario, error.
             if sym in FALLBACK_SYMBOLS.get(ex, set()):
                 return
             raise ValueError(f"No se pudo validar el símbolo en {exchange}: {exc}")
-    # Otros exchanges: solo fallback si está cargado
+    if ex == "dydx":
+        # No se valida aquí; se asume símbolo dYdX válido.
+        return
     if sym in FALLBACK_SYMBOLS.get(ex, set()):
         return
     raise ValueError(f"No se reconoce el exchange '{exchange}' o el símbolo {sym} no está permitido.")

@@ -6,6 +6,14 @@ users:
         api_key_env: DIEGO_BINANCE_API_KEY
         api_secret_env: DIEGO_BINANCE_API_SECRET
         environment: testnet
+      dydx:
+        api_key_env: DIEGO_DYDX_API_KEY
+        api_secret_env: DIEGO_DYDX_API_SECRET
+        passphrase_env: DIEGO_DYDX_PASSPHRASE
+        stark_key_env: DIEGO_DYDX_STARK_KEY
+        environment: testnet
+        notional_usdc: 100.0
+        max_position_usdc: 200.0
   - id: sofia
     label: Cuenta Sofia
     exchanges:
