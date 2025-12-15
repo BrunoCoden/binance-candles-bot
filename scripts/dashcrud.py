@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, Dict
 from urllib.parse import urlparse
 import shutil
+import subprocess
 
 import requests
 
@@ -215,6 +216,17 @@ def _save_with_backup(manager: AccountManager, path: Path) -> None:
     manager.save_to_file(path)
 
 
+def _restart_services(services: list[str]) -> tuple[bool, str | None]:
+    """
+    Reinicia servicios systemd. Devuelve (ok, error_msg).
+    """
+    try:
+        subprocess.run(["sudo", "systemctl", "restart", *services], check=True)
+        return True, None
+    except subprocess.CalledProcessError as exc:  # pragma: no cover - externo
+        return False, str(exc)
+
+
 class DashCRUDHandler(BaseHTTPRequestHandler):
     manager: AccountManager
     accounts_path: Path
@@ -377,7 +389,11 @@ class DashCRUDHandler(BaseHTTPRequestHandler):
             account.exchanges = {}
             self.manager.upsert_exchange(user_id, cred)
             _save_with_backup(self.manager, self.accounts_path)
-            self._send_json(200, self._snapshot())
+            ok, err = _restart_services(["bot-watcher.service", "bot-strategy.service", "bot-order-listener.service"])
+            resp = self._snapshot()
+            if not ok and err:
+                resp["warning"] = f"No se pudieron reiniciar servicios: {err}"
+            self._send_json(200, resp)
             return
 
         self.send_error(404, "Ruta no encontrada")
