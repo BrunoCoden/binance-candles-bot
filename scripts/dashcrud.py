@@ -135,10 +135,6 @@ def _save_env_file(env_path: Path, lines: list[str]) -> None:
 def _set_env_vars(env_path: Path, mapping: Dict[str, str]) -> None:
     """Actualiza/crea variables en el env file, con backup previo."""
     try:
-        if env_path.exists():
-            ts = datetime.utcnow().strftime("%Y%m%d%H%M%S")
-            shutil.copy2(env_path, env_path.with_suffix(env_path.suffix + f".bak.{ts}"))
-
         lines = _load_env_file(env_path)
         out = []
         seen = set()
