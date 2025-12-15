@@ -15,7 +15,7 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Dict
-from urllib.parse import urlparse
+from urllib.parse import urlparse, unquote
 import shutil
 import subprocess
 
@@ -277,7 +277,7 @@ class DashCRUDHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
         path = parsed.path.rstrip("/") or "/"
-        parts = [p for p in path.split("/") if p]
+        parts = [unquote(p) for p in path.split("/") if p]
 
         if path == "/":
             self._serve_html()
@@ -300,7 +300,7 @@ class DashCRUDHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
-        parts = [p for p in parsed.path.split("/") if p]
+        parts = [unquote(p) for p in parsed.path.split("/") if p]
         if parts == ["api", "accounts"]:
             payload = self._read_json()
             if payload is None:
@@ -333,7 +333,7 @@ class DashCRUDHandler(BaseHTTPRequestHandler):
 
     def do_PUT(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
-        parts = [p for p in parsed.path.split("/") if p]
+        parts = [unquote(p) for p in parsed.path.split("/") if p]
         if parts[:2] != ["api", "accounts"]:
             self.send_error(404, "Ruta no encontrada")
             return
@@ -400,7 +400,7 @@ class DashCRUDHandler(BaseHTTPRequestHandler):
 
     def do_DELETE(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
-        parts = [p for p in parsed.path.split("/") if p]
+        parts = [unquote(p) for p in parsed.path.split("/") if p]
         if parts[:2] != ["api", "accounts"] or len(parts) != 3:
             self.send_error(404, "Ruta no encontrada")
             return
