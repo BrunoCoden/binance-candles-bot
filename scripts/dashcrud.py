@@ -155,7 +155,8 @@ def _set_env_vars(env_path: Path, mapping: Dict[str, str]) -> None:
                 out.append(f"{k}={v}")
         _save_env_file(env_path, out)
     except PermissionError as exc:
-        raise RuntimeError(f"Sin permisos para escribir {env_path} (ejecuta DashCRUD con sudo o ajusta permisos).") from exc
+        print(f"[ENV][WARN] No se pudo escribir {env_path}: {exc}; las variables deben cargarse a mano.")
+        return
 
 
 def _build_credential(payload: Dict[str, Any], default_name: str | None = None, *, user_id: str | None = None, env_path: Path = DEFAULT_ENV_PATH) -> ExchangeCredential:
