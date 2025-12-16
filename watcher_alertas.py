@@ -629,6 +629,7 @@ def _submit_trade(event: dict) -> None:
 POLL_SECONDS = float(os.getenv("ALERT_POLL_SECONDS", "5"))
 MAX_SEEN = int(os.getenv("ALERT_MAX_SEEN", "500"))
 SEND_STARTUP_TEST = os.getenv("WATCHER_STARTUP_TEST_ALERT", "true").lower() == "true"
+THRESHOLD_POLL_SECONDS = float(os.getenv("THRESHOLD_POLL_SECONDS", "1"))
 
 
 def _notify_startup():
@@ -678,6 +679,7 @@ def main():
     seen = []
     interval_sec = _interval_seconds(STREAM_INTERVAL)
     _notify_startup()
+    last_threshold_check = 0.0
     while True:
         try:
             events = generate_alerts()
@@ -733,6 +735,32 @@ def main():
             if TRADING_ENABLED:
                 for item in due:
                     _submit_trade(item["event"])
+
+        # Chequeo periódico de umbrales aunque no haya nuevas alertas
+        now_ts = time.time()
+        if now_ts - last_threshold_check >= THRESHOLD_POLL_SECONDS:
+            last_threshold_check = now_ts
+            try:
+                # intenta obtener precio desde la última vela en stream (si generate_alerts lo dejó en cache)
+                # fallback: usa el precio del último evento pendiente o el último precio conocido en ALERTS_TABLE_CSV_PATH si fuese necesario
+                current_price = None
+                try:
+                    from velas import LAST_KLINES_CACHE  # type: ignore
+                    df = LAST_KLINES_CACHE.get("stream") if isinstance(LAST_KLINES_CACHE, dict) else None
+                    if df is not None and not df.empty:
+                        current_price = float(df["Close"].iloc[-1])
+                except Exception:
+                    pass
+                if current_price:
+                    ts_eval = datetime.now(timezone.utc)
+                    try:
+                        extra_alerts = _evaluate_thresholds(current_price, ts_eval)
+                        if extra_alerts:
+                            send_alerts(extra_alerts)
+                    except Exception as exc:
+                        print(f"[ALERT][WARN] Falló evaluación periódica de umbrales ({exc})")
+            except Exception:
+                pass
 
         time.sleep(POLL_SECONDS)
 
