@@ -59,26 +59,31 @@ def _bollinger_alert(bb_aligned: pd.DataFrame, ohlc_stream: pd.DataFrame):
     if bb_aligned is None or bb_aligned.empty or ohlc_stream.empty:
         return None
 
-    close = ohlc_stream["Close"].astype("float64")
+    close_series = ohlc_stream["Close"].astype("float64")
     upper = bb_aligned.get("upper")
     lower = bb_aligned.get("lower")
     basis = bb_aligned.get("basis")
 
-    if upper is None or lower is None or close.empty:
+    if upper is None or lower is None or close_series.empty:
         return None
 
-    if len(close) < 2 or len(upper) < 2 or len(lower) < 2:
+    # Usa solo velas cerradas: descarta la última fila (vela en curso)
+    if len(close_series) < 2 or len(upper) < 2 or len(lower) < 2:
+        return None
+    closed_close = close_series.iloc[:-1]
+    closed_upper = upper.iloc[:-1]
+    closed_lower = lower.iloc[:-1]
+    closed_basis = basis.iloc[:-1] if basis is not None else None
+
+    if closed_close.empty:
         return None
 
-    last_idx = close.index[-1]
-    close_now = float(close.iloc[-1])
-    close_prev = float(close.iloc[-2])
-    upper_now = float(upper.iloc[-1])
-    upper_prev = float(upper.iloc[-2])
-    lower_now = float(lower.iloc[-1])
-    lower_prev = float(lower.iloc[-2])
+    last_idx = closed_close.index[-1]
+    close_now = float(closed_close.iloc[-1])
+    upper_now = float(closed_upper.iloc[-1])
+    lower_now = float(closed_lower.iloc[-1])
 
-    if any(np.isnan(val) for val in (close_now, close_prev, upper_now, upper_prev, lower_now, lower_prev)):
+    if any(np.isnan(val) for val in (close_now, upper_now, lower_now)):
         return None
 
     direction_filter = BB_DIRECTION
@@ -90,37 +95,30 @@ def _bollinger_alert(bb_aligned: pd.DataFrame, ohlc_stream: pd.DataFrame):
     trigger_price = None
     break_ts = None
 
-    # Si hay una rotura pendiente, esperar rebote (cierre del lado opuesto de la banda)
+    # Si hay una rotura pendiente, esperar rebote (cierre del lado opuesto de la banda) en vela posterior
     if _pending_break:
         pend_dir = _pending_break.get("direction")
         break_ts = _pending_break.get("break_ts")
         if pend_dir == "long" and direction_filter != -1:
-            if close_now > lower_now:
-                # Evita consumir en la misma vela que rompió
-                if break_ts is not None and last_idx == break_ts:
-                    print(f"[ALERT][PENDING] Rebote intra-vela LONG ignorado ts={last_idx}")
-                else:
-                    trend = "alcista"
-                    direction = "long"
-                    ref_price = lower_now  # banda de la vela de rebote (vela posterior)
-                    trigger_price = lower_now
-                    print(
-                        f"[ALERT][PENDING] Consumida rotura pendiente LONG (rebote) band={lower_now:.2f} close={close_now:.2f} ts={last_idx}"
-                    )
-                    _pending_break = None
+            if break_ts is not None and last_idx > break_ts and close_now > lower_now:
+                trend = "alcista"
+                direction = "long"
+                ref_price = lower_now  # banda de la vela de rebote (vela posterior)
+                trigger_price = lower_now
+                print(
+                    f"[ALERT][PENDING] Consumida rotura pendiente LONG (rebote) band={lower_now:.2f} close={close_now:.2f} ts={last_idx}"
+                )
+                _pending_break = None
         elif pend_dir == "short" and direction_filter != 1:
-            if close_now < upper_now:
-                if break_ts is not None and last_idx == break_ts:
-                    print(f"[ALERT][PENDING] Rebote intra-vela SHORT ignorado ts={last_idx}")
-                else:
-                    trend = "bajista"
-                    direction = "short"
-                    ref_price = upper_now  # banda de la vela de rebote (vela posterior)
-                    trigger_price = upper_now
-                    print(
-                        f"[ALERT][PENDING] Consumida rotura pendiente SHORT (rebote) band={upper_now:.2f} close={close_now:.2f} ts={last_idx}"
-                    )
-                    _pending_break = None
+            if break_ts is not None and last_idx > break_ts and close_now < upper_now:
+                trend = "bajista"
+                direction = "short"
+                ref_price = upper_now  # banda de la vela de rebote (vela posterior)
+                trigger_price = upper_now
+                print(
+                    f"[ALERT][PENDING] Consumida rotura pendiente SHORT (rebote) band={upper_now:.2f} close={close_now:.2f} ts={last_idx}"
+                )
+                _pending_break = None
         # Si no se cumplió el rebote, seguimos esperando (no devolvemos alerta aún)
 
     # Si no hay alerta confirmada, registrar nuevas roturas
