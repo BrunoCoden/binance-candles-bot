@@ -12,6 +12,11 @@ users:
       notional_usdt: 20.0
       leverage: 5
       extra: {}
+      passphrase_env: null
+      stark_key_env: null
+      notional_usdc: null
+      max_position_usdc: null
+      margin_mode: null
 - id: diego
   label: Cuenta Diego(Live)
   enabled: true
@@ -25,14 +30,23 @@ users:
       notional_usdt: 100.0
       leverage: 5
       extra: {}
+      passphrase_env: null
+      stark_key_env: null
+      notional_usdc: null
+      max_position_usdc: null
+      margin_mode: null
     dydx:
       exchange: dydx
       api_key_env: DIEGO_DYDX_API_KEY_LIVE
       api_secret_env: DIEGO_DYDX_API_SECRET_LIVE
-      passphrase_env: DIEGO_DYDX_PASSPHRASE_LIVE
-      stark_key_env: DIEGO_DYDX_STARK_KEY_LIVE
       environment: live
-      notional_usdc: 200.0
+      notional_usdt: null
+      leverage: null
+      extra:
+        symbol: ETH-USD
+        subaccount: 0
+      passphrase_env: null
+      stark_key_env: null
+      notional_usdc: 50.0
       max_position_usdc: 400.0
       margin_mode: isolated
-      extra: {}

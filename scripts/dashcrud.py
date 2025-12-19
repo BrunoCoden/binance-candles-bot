@@ -20,6 +20,7 @@ import shutil
 import subprocess
 
 import requests
+import yaml
 
 # Asegura imports relativos al repo
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -31,7 +32,9 @@ from trading.accounts.models import AccountConfig, ExchangeCredential, ExchangeE
 
 DEFAULT_ACCOUNTS_PATH = Path("trading/accounts/oci_accounts.yaml")
 DEFAULT_HTML = REPO_ROOT / "trading/accounts/dashcrud.html"
-DEFAULT_ENV_PATH = Path(os.getenv("DASHCRUD_ENV_PATH", "/etc/systemd/system/bot.env"))
+DEFAULT_ENV_PATH = Path(os.getenv("DASHCRUD_ENV_PATH", "/home/ubuntu/bot/.env"))
+# Path secundario opcional para compatibilidad (systemd env file)
+SECONDARY_ENV_PATH = Path("/etc/systemd/system/bot.env")
 FALLBACK_SYMBOLS = {"binance": {"ETHUSDT", "BTCUSDT"}}
 
 
@@ -170,21 +173,49 @@ def _build_credential(payload: Dict[str, Any], default_name: str | None = None, 
         valid = [e.value for e in ExchangeEnvironment]
         raise ValueError(f"environment debe ser uno de {valid}.")
 
-    api_key_env = (payload.get("api_key_env") or "").strip()
-    api_secret_env = (payload.get("api_secret_env") or "").strip()
-    api_key_plain = (payload.get("api_key_plain") or "").strip()
-    api_secret_plain = (payload.get("api_secret_plain") or "").strip()
+    api_key_env = str(payload.get("api_key_env") or "").strip()
+    api_secret_env = str(payload.get("api_secret_env") or "").strip()
+    # Valores en texto plano (acepta *_plain o *_text)
+    api_key_plain = str(
+        payload.get("api_key_plain")
+        or payload.get("api_key_text")
+        or payload.get("api_key")
+        or ""
+    ).strip()
+    api_secret_plain = str(
+        payload.get("api_secret_plain")
+        or payload.get("api_secret_text")
+        or payload.get("api_secret")
+        or ""
+    ).strip()
+    def _looks_like_secret(val: str) -> bool:
+        return bool(val) and len(val) >= 20 and " " not in val and "=" not in val
+
+    # Heurística: si el usuario pegó las claves en los campos *_env (confusión común), las tratamos como valores.
+    if not api_key_plain and not api_secret_plain and _looks_like_secret(api_key_env) and _looks_like_secret(api_secret_env):
+        api_key_plain, api_secret_plain = api_key_env, api_secret_env
+        api_key_env, api_secret_env = "", ""
+
     if api_key_plain and api_secret_plain:
         if not user_id:
             raise ValueError("user_id es obligatorio para generar variables de entorno.")
-        gen_key, gen_secret = _generate_env_names(user_id, name, environment)
-        _set_env_vars(env_path, {gen_key: api_key_plain, gen_secret: api_secret_plain})
-        api_key_env, api_secret_env = gen_key, gen_secret
+        # Si no especificaron nombres de env, se generan; si los pasaron, se usan esos
+        if not api_key_env or not api_secret_env:
+            gen_key, gen_secret = _generate_env_names(user_id, name, environment)
+            api_key_env, api_secret_env = gen_key, gen_secret
+        _set_env_vars(env_path, {api_key_env: api_key_plain, api_secret_env: api_secret_plain})
+        # Compatibilidad: también intentamos escribir en /etc/systemd/system/bot.env si existe o se puede
+        try:
+            _set_env_vars(SECONDARY_ENV_PATH, {api_key_env: api_key_plain, api_secret_env: api_secret_plain})
+        except Exception:
+            pass
 
     if not api_key_env or not api_secret_env:
         raise ValueError("api_key_env y api_secret_env son obligatorios (o provée keys en texto para generarlas).")
 
-    symbol = (payload.get("symbol") or payload.get("pair") or "").strip().upper()
+    symbol = str(payload.get("symbol") or payload.get("pair") or "").strip().upper()
+    if not symbol and name == "dydx":
+        symbol = "ETH-USD"
     if not symbol:
         raise ValueError("symbol es obligatorio.")
 
@@ -196,6 +227,8 @@ def _build_credential(payload: Dict[str, Any], default_name: str | None = None, 
     leverage = int(leverage_val) if leverage_val not in (None, "", False) else None
     extra = payload.get("extra") if isinstance(payload.get("extra"), dict) else {}
     extra = {**extra, "symbol": symbol}
+    if name == "dydx" and "subaccount" not in extra:
+        extra["subaccount"] = int(payload.get("subaccount") or 0)
 
     return ExchangeCredential(
         exchange=name,
@@ -220,11 +253,18 @@ def _restart_services(services: list[str]) -> tuple[bool, str | None]:
     """
     Reinicia servicios systemd. Devuelve (ok, error_msg).
     """
-    try:
-        subprocess.run(["sudo", "systemctl", "restart", *services], check=True)
-        return True, None
-    except subprocess.CalledProcessError as exc:  # pragma: no cover - externo
-        return False, str(exc)
+    cmds = [
+        ["sudo", "systemctl", "restart", *services],
+        ["systemctl", "restart", *services],
+    ]
+    errors = []
+    for cmd in cmds:
+        try:
+            subprocess.run(cmd, check=True)
+            return True, None
+        except subprocess.CalledProcessError as exc:  # pragma: no cover - externo
+            errors.append(str(exc))
+    return False, "; ".join(errors)
 
 
 class DashCRUDHandler(BaseHTTPRequestHandler):
@@ -246,6 +286,19 @@ class DashCRUDHandler(BaseHTTPRequestHandler):
         try:
             return json.loads(raw.decode("utf-8"))
         except json.JSONDecodeError:
+            try:
+                decoded = raw.decode("utf-8", errors="replace")
+                print(f"[HTTP][WARN] JSON inválido (json.loads): {decoded}")
+                # Intento con YAML para tolerar pequeños desvíos de sintaxis
+                try:
+                    alt = yaml.safe_load(decoded)
+                    if isinstance(alt, dict):
+                        print("[HTTP][INFO] JSON parseado vía YAML fallback")
+                        return alt
+                except Exception as exc:
+                    print(f"[HTTP][WARN] YAML fallback falló: {exc}")
+            except Exception:
+                pass
             self._send_json(400, {"error": "JSON inválido"})
             return None
 
