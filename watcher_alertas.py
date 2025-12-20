@@ -251,26 +251,14 @@ def _current_position(user_id: str, exchange: str, symbol: str) -> float:
                 return 0.0
             return float(pos[0].get("positionAmt") or 0.0)
         elif exchange.lower() == "dydx":
-            from dydx_v4_client.client import Client as DydxClient
-
-            api_key, api_secret = cred.resolve_keys(os.environ)
-            passphrase = cred.resolve_optional(os.environ, cred.passphrase_env)
-            stark_key = cred.resolve_optional(os.environ, cred.stark_key_env)
-            host = "https://api.dydx.exchange" if cred.environment == ExchangeEnvironment.LIVE else "https://testnet.dydx.exchange"
-            client = DydxClient(
-                api_key=api_key,
-                api_secret=api_secret,
-                passphrase=passphrase,
-                host=host,
-                stark_private_key=stark_key,
-                subaccount_number=0,
-            )
-            res = client.private.get_positions(market=symbol)
-            positions = res.get("positions") if isinstance(res, dict) else []
-            if not positions:
-                return 0.0
-            size = float(positions[0].get("size") or 0.0)
-            return size
+            # Usa wallet address + private key (formato v4 nativo)
+            from trading.exchanges.dydx import get_dydx_position
+            
+            api_key, _ = cred.resolve_keys(os.environ)  # api_key es la wallet address
+            subaccount_number = cred.extra.get("subaccount", 0) if cred.extra else 0
+            market_symbol = cred.extra.get("symbol", symbol) if cred.extra else symbol
+            
+            return get_dydx_position(api_key, market_symbol, subaccount_number)
         return 0.0
     except Exception:
         return 0.0
@@ -305,28 +293,14 @@ def _close_position(user_id: str, exchange: str, symbol: str, direction: str) ->
                 reduceOnly="true",
             )
         elif exchange.lower() == "dydx":
-            from dydx_v4_client.client import Client as DydxClient
-
-            api_key, api_secret = cred.resolve_keys(os.environ)
-            passphrase = cred.resolve_optional(os.environ, cred.passphrase_env)
-            stark_key = cred.resolve_optional(os.environ, cred.stark_key_env)
-            host = "https://api.dydx.exchange" if cred.environment == ExchangeEnvironment.LIVE else "https://testnet.dydx.exchange"
-            client = DydxClient(
-                api_key=api_key,
-                api_secret=api_secret,
-                passphrase=passphrase,
-                host=host,
-                stark_private_key=stark_key,
-                subaccount_number=0,
-            )
+            # Usa OrderExecutor con wallet address + private key (formato v4 nativo)
+            from trading.exchanges.dydx import close_dydx_position_via_order_executor
+            
+            market_symbol = cred.extra.get("symbol", symbol) if cred.extra else symbol
+            success = close_dydx_position_via_order_executor(account, cred, market_symbol, pos_amt)
+            if not success:
+                return False
             side = "BUY" if pos_amt < 0 else "SELL"
-            client.private.create_order(
-                market=symbol,
-                side=side,
-                type="MARKET",
-                size=f"{qty:.6f}",
-                reduceOnly=True,
-            )
         else:
             return False
         print(f"[WATCHER][INFO] Cierre reduceOnly MARKET user={user_id} ex={exchange} symbol={symbol} qty={qty} side={side}")
@@ -494,27 +468,14 @@ def _close_opposite_position(user_id: str, exchange: str, direction: str, symbol
                 reduceOnly="true",
             )
         elif exchange.lower() == "dydx":
-            from dydx_v4_client.client import Client as DydxClient
-
-            api_key, api_secret = cred.resolve_keys(os.environ)
-            passphrase = cred.resolve_optional(os.environ, cred.passphrase_env)
-            stark_key = cred.resolve_optional(os.environ, cred.stark_key_env)
-            host = "https://api.dydx.exchange" if cred.environment == ExchangeEnvironment.LIVE else "https://testnet.dydx.exchange"
-            client = DydxClient(
-                api_key=api_key,
-                api_secret=api_secret,
-                passphrase=passphrase,
-                host=host,
-                stark_private_key=stark_key,
-                subaccount_number=0,
-            )
-            client.private.create_order(
-                market=symbol,
-                side=side,
-                type="MARKET",
-                size=f"{qty:.6f}",
-                reduceOnly=True,
-            )
+            # Usa OrderExecutor con wallet address + private key (formato v4 nativo)
+            from trading.exchanges.dydx import close_dydx_position_via_order_executor
+            
+            market_symbol = cred.extra.get("symbol", symbol) if cred.extra else symbol
+            # pos_amt ya tiene el signo correcto (positivo long, negativo short)
+            success = close_dydx_position_via_order_executor(account, cred, market_symbol, pos_amt)
+            if not success:
+                return False
         print(
             f"[WATCHER][INFO] Cierre reduceOnly (MARKET) de posición opuesta qty={qty} side={side} en {symbol} ex={exchange}"
         )

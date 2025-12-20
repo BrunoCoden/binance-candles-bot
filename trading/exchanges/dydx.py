@@ -23,6 +23,7 @@ from v4_proto.dydxprotocol.clob.order_pb2 import Order
 
 from .base import ExchangeClient, ExchangeRegistry
 from ..accounts.models import AccountConfig, ExchangeCredential, ExchangeEnvironment
+from ..accounts.manager import AccountManager
 from ..orders.models import CancelRequest, CancelResponse, OrderRequest, OrderResponse
 from ..utils.logging import get_logger
 
@@ -34,6 +35,93 @@ MAINNET_CHAIN_ID = "dydx-mainnet-1"
 MAINNET_CHAIN_DENOM = "adydx"
 MAINNET_USDC_DENOM = "ibc/8E27BA2D5493AF5636760E354E46004562C46AB7EC0CC4C1CA14E9E20E2545B5"
 INDEXER_URL = os.getenv("DYDX_INDEXER_URL", "https://indexer.dydx.trade/v4/perpetualMarkets")
+INDEXER_BASE = os.getenv("DYDX_INDEXER_BASE", "https://indexer.dydx.trade/v4")
+
+
+def get_dydx_position(wallet_address: str, market_symbol: str, subaccount_number: int = 0) -> float:
+    """
+    Consulta la posición actual en dYdX usando el indexer REST API.
+    
+    Args:
+        wallet_address: Dirección de la wallet (dydx1...)
+        market_symbol: Símbolo del mercado (ej: ETH-USD)
+        subaccount_number: Número de subaccount (default: 0)
+    
+    Returns:
+        Cantidad firmada de la posición (long >0, short <0, 0 si no hay posición)
+    """
+    try:
+        # El indexer de dYdX v4 usa el endpoint de subaccounts
+        url = f"{INDEXER_BASE}/addresses/{wallet_address}/subaccountNumber/{subaccount_number}/perpetualPositions"
+        r = requests.get(url, timeout=10)
+        r.raise_for_status()
+        data = r.json()
+        
+        positions = data.get("positions") or []
+        market_symbol_upper = market_symbol.upper()
+        
+        for pos in positions:
+            if pos.get("market") == market_symbol_upper:
+                size = float(pos.get("size", "0") or "0")
+                # dYdX devuelve size como string, positivo para long, negativo para short
+                return size
+        
+        return 0.0
+    except Exception as exc:
+        logger.error("Error consultando posición dYdX para %s en %s: %s", wallet_address, market_symbol, exc)
+        return 0.0
+
+
+def close_dydx_position_via_order_executor(
+    account: AccountConfig,
+    credential: ExchangeCredential,
+    symbol: str,
+    position_size: float,
+) -> bool:
+    """
+    Cierra una posición en dYdX usando OrderExecutor (reduceOnly MARKET).
+    
+    Args:
+        account: Configuración de la cuenta
+        credential: Credenciales del exchange
+        symbol: Símbolo del mercado
+        position_size: Tamaño de la posición (positivo para long, negativo para short)
+    
+    Returns:
+        True si la orden se envió correctamente, False en caso contrario
+    """
+    if position_size == 0:
+        return False
+    
+    try:
+        from ..orders.executor import OrderExecutor
+        from ..orders.models import OrderRequest, OrderSide, OrderType, TimeInForce
+        
+        # Crear AccountManager con la cuenta y credencial
+        manager = AccountManager([account])
+        
+        executor = OrderExecutor(manager)
+        
+        # Determinar side: si position_size > 0 (long), necesitamos vender (SELL)
+        # Si position_size < 0 (short), necesitamos comprar (BUY)
+        side = OrderSide.SELL if position_size > 0 else OrderSide.BUY
+        qty = abs(position_size)
+        
+        order = OrderRequest(
+            symbol=symbol,
+            side=side,
+            type=OrderType.MARKET,
+            quantity=qty,
+            price=None,
+            time_in_force=TimeInForce.GTC,
+            reduce_only=True,
+        )
+        
+        response = executor.execute(account.user_id, credential.exchange, order, dry_run=False)
+        return response.success
+    except Exception as exc:
+        logger.error("Error cerrando posición dYdX: %s", exc)
+        return False
 
 
 class DydxClientWrapper(ExchangeClient):
