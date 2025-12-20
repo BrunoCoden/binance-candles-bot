@@ -160,7 +160,8 @@ def _resolve_quantity(event: dict, notional_usdt: float | None = None) -> float:
 
 
 def _price_from_event(event: dict) -> float | None:
-    for key in ("reference_band", "price", "entry_price"):
+    # Prioridad: entry/price explícitos, luego banda de referencia y, por último, close
+    for key in ("entry_price", "price", "reference_band"):
         val = event.get(key)
         if val is None:
             continue
@@ -606,9 +607,9 @@ def _submit_trade(event: dict) -> None:
         order = OrderRequest(
             symbol=symbol,
             side=side,
-            type=OrderType.LIMIT,
+            type=OrderType.MARKET,
             quantity=quantity,
-            price=price,
+            price=None,
             time_in_force=TimeInForce.GTC,
             extra_params=extra,
         )

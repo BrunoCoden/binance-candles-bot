@@ -93,6 +93,7 @@ def _bollinger_alert(bb_aligned: pd.DataFrame, ohlc_stream: pd.DataFrame):
     direction = None
     ref_price = None
     trigger_price = None
+    band_ref = None
     break_ts = None
 
     # Si hay una rotura pendiente, esperar rebote (cierre del lado opuesto de la banda) en vela posterior
@@ -103,8 +104,10 @@ def _bollinger_alert(bb_aligned: pd.DataFrame, ohlc_stream: pd.DataFrame):
             if break_ts is not None and last_idx > break_ts and close_now > lower_now:
                 trend = "alcista"
                 direction = "long"
-                ref_price = lower_now  # banda de la vela de rebote (vela posterior)
-                trigger_price = lower_now
+                # Entrada a precio de cierre de la vela de rebote; banda se mantiene como referencia
+                ref_price = close_now
+                trigger_price = close_now
+                band_ref = lower_now
                 print(
                     f"[ALERT][PENDING] Consumida rotura pendiente LONG (rebote) band={lower_now:.2f} close={close_now:.2f} ts={last_idx}"
                 )
@@ -113,8 +116,9 @@ def _bollinger_alert(bb_aligned: pd.DataFrame, ohlc_stream: pd.DataFrame):
             if break_ts is not None and last_idx > break_ts and close_now < upper_now:
                 trend = "bajista"
                 direction = "short"
-                ref_price = upper_now  # banda de la vela de rebote (vela posterior)
-                trigger_price = upper_now
+                ref_price = close_now
+                trigger_price = close_now
+                band_ref = upper_now
                 print(
                     f"[ALERT][PENDING] Consumida rotura pendiente SHORT (rebote) band={upper_now:.2f} close={close_now:.2f} ts={last_idx}"
                 )
@@ -171,13 +175,15 @@ def _bollinger_alert(bb_aligned: pd.DataFrame, ohlc_stream: pd.DataFrame):
         "timestamp": (timestamp - interval_delta) if interval_delta is not None else timestamp,
         "message": (
             f"{SYMBOL_DISPLAY} {STREAM_INTERVAL}: Señal Bollinger {trend} en {trigger_price:.2f} "
-            f"(banda de referencia {ref_price:.2f})"
+            f"(banda de ruptura {band_ref:.2f} ref)"
         ),
+        # Entrada al cierre de la vela de rebote (market); se deja banda como referencia
         "price": trigger_price,
+        "entry_price": ref_price,
         "close_price": close_now,
         "direction": direction,
         "basis": basis_now,
-        "reference_band": ref_price,
+        "reference_band": band_ref,
         "volume": volume,
         "stop_loss": stop_loss,
         "take_profit": take_profit,
