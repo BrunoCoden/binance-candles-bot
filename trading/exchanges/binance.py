@@ -42,7 +42,11 @@ class BinanceClient(ExchangeClient):
             "quantity": _quantize(order.quantity, "0.001"),
             "reduceOnly": "true" if order.reduce_only else "false",
         }
-        # Forzamos post-only en entradas para evitar fills a otro precio.
+        if order.type.value == "MARKET":
+            # Binance rechaza timeInForce/isPostOnly en órdenes MARKET
+            return params
+
+        # LIMIT / STOP_LIMIT conservan post-only + timeInForce/price
         if not order.reduce_only:
             params["isPostOnly"] = "true"
         if order.time_in_force:
