@@ -24,7 +24,7 @@ from v4_proto.dydxprotocol.clob.order_pb2 import Order
 from .base import ExchangeClient, ExchangeRegistry
 from ..accounts.models import AccountConfig, ExchangeCredential, ExchangeEnvironment
 from ..accounts.manager import AccountManager
-from ..orders.models import CancelRequest, CancelResponse, OrderRequest, OrderResponse
+from ..orders.models import CancelRequest, CancelResponse, OrderRequest, OrderResponse, OrderType
 from ..utils.logging import get_logger
 
 logger = get_logger("trading.exchanges.dydx")
@@ -219,7 +219,39 @@ class DydxClientWrapper(ExchangeClient):
             step = Decimal(str(pair["step_base_quantums"]))
             qty_quantums = self._quantize_qty(order.quantity, step)
             subticks_per_tick = int(pair["subticks_per_tick"])
-            price_subticks = self._quantize_price(order.price or 0, subticks_per_tick)
+            
+            # Para órdenes MARKET, obtener precio actual del mercado
+            if order.type == OrderType.MARKET and (order.price is None or order.price == 0):
+                # Obtener precio actual desde el indexer
+                try:
+                    # Usar el mismo endpoint que _resolve_clob_pair
+                    r = requests.get(INDEXER_URL, timeout=10)
+                    r.raise_for_status()
+                    data = r.json()
+                    markets = data.get("markets") or data.get("perpetualMarkets") or {}
+                    market_info = markets.get(market_symbol.upper())
+                    if not market_info:
+                        raise ValueError(f"Mercado {market_symbol.upper()} no encontrado")
+                    current_price = float(market_info.get("indexPrice") or market_info.get("markPrice") or market_info.get("oraclePrice", 0))
+                    if current_price == 0:
+                        raise ValueError("No se pudo obtener precio actual")
+                    # Usar precio actual con un pequeño slippage para asegurar ejecución
+                    # Para BUY: precio ligeramente más alto, para SELL: precio ligeramente más bajo
+                    slippage = 0.001  # 0.1% slippage
+                    if order.side.value.upper() == "BUY":
+                        market_price = current_price * (1 + slippage)
+                    else:
+                        market_price = current_price * (1 - slippage)
+                    logger.info("Orden MARKET: usando precio de mercado %f (precio actual: %f)", market_price, current_price)
+                except Exception as exc:
+                    logger.error("Error obteniendo precio para orden MARKET: %s", exc)
+                    return OrderResponse(success=False, status="ERROR", error=f"No se pudo obtener precio para orden MARKET: {exc}")
+            else:
+                market_price = order.price or 0
+                if market_price == 0:
+                    return OrderResponse(success=False, status="ERROR", error="Precio requerido para órdenes LIMIT")
+            
+            price_subticks = self._quantize_price(market_price, subticks_per_tick)
 
             side = Order.Side.SIDE_BUY if order.side.value.upper() == "BUY" else Order.Side.SIDE_SELL
             # Bloque de expiración corto: 50 bloques (~) a futuro
