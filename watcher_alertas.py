@@ -585,6 +585,10 @@ def _submit_trade(event: dict) -> None:
                 # Registra umbrales fijos (-5% / +9%) para alertas de cierre
                 entry_used = float(response.avg_price or price)
                 _register_threshold(user_id, exchange, symbol, direction, entry_used)
+        except RuntimeError as exc:
+            # Faltan credenciales u otro error de configuración: loguea y sigue con el siguiente exchange/usuario.
+            print(f"[WATCHER][WARN] Credenciales/config faltantes para {user_id}/{exchange}: {exc}")
+            continue
         except Exception as exc:
             print(f"[WATCHER][ERROR] Falló la ejecución de orden usuario={user_id} exchange={exchange} ({exc})")
 
