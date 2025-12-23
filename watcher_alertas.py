@@ -714,12 +714,12 @@ def main():
                 except Exception:
                     pass
                 if current_price:
-                    ts_eval = datetime.now(timezone.utc)
-                    try:
-                        extra_alerts = _evaluate_thresholds(current_price, ts_eval)
-                        if extra_alerts:
-                            send_alerts(extra_alerts)
-                    except Exception as exc:
+                ts_eval = datetime.now(timezone.utc)
+                try:
+                    extra_alerts = _evaluate_thresholds(current_price, ts_eval)
+                    if extra_alerts:
+                        send_alerts(extra_alerts)
+                except Exception as exc:
                         print(f"[ALERT][WARN] Falló evaluación periódica de umbrales ({exc})")
             except Exception:
                 pass

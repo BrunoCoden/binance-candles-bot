@@ -165,14 +165,11 @@ def _bollinger_alert(bb_aligned: pd.DataFrame, ohlc_stream: pd.DataFrame):
     basis_now = float(basis.iloc[-1]) if basis is not None else np.nan
 
     timestamp = bar_close_ts if isinstance(bar_close_ts, pd.Timestamp) else pd.Timestamp(bar_close_ts)
-    try:
-        interval_delta = pd.to_timedelta(STREAM_INTERVAL)
-    except (ValueError, TypeError):
-        interval_delta = None
 
     return {
         "type": "bollinger_signal",
-        "timestamp": (timestamp - interval_delta) if interval_delta is not None else timestamp,
+        # Timestamp exacto de cierre de la vela de rebote (sin desplazar al inicio)
+        "timestamp": timestamp,
         "message": (
             f"{SYMBOL_DISPLAY} {STREAM_INTERVAL}: Señal Bollinger {trend} en {trigger_price:.2f} "
             f"(banda de ruptura {band_ref:.2f} ref)"
