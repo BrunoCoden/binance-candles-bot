@@ -35,7 +35,7 @@ DEFAULT_HTML = REPO_ROOT / "trading/accounts/dashcrud.html"
 DEFAULT_ENV_PATH = Path(os.getenv("DASHCRUD_ENV_PATH", "/home/ubuntu/bot/.env"))
 # Path secundario opcional para compatibilidad (systemd env file)
 SECONDARY_ENV_PATH = Path("/etc/systemd/system/bot.env")
-FALLBACK_SYMBOLS = {"binance": {"ETHUSDT", "BTCUSDT"}}
+FALLBACK_SYMBOLS = {"binance": {"ETHUSDT", "BTCUSDT"}, "bybit": {"ETHUSDT", "BTCUSDT"}}
 
 
 def _load_manager(path: Path) -> AccountManager:
@@ -84,7 +84,7 @@ def _validate_symbol(exchange: str, environment: ExchangeEnvironment, symbol: st
     """
     Valida el símbolo contra el exchange.
     - Binance: consulta exchangeInfo.
-    - dYdX: se acepta sin validar contra la API (testnet/live difieren; se asume símbolo válido).
+    - dYdX, Bybit: se acepta sin validar contra la API (asumimos símbolo válido), con fallback si se configuró.
     - Otros: usa fallback si está configurado.
     """
     ex = exchange.lower()
@@ -107,8 +107,7 @@ def _validate_symbol(exchange: str, environment: ExchangeEnvironment, symbol: st
             if sym in FALLBACK_SYMBOLS.get(ex, set()):
                 return
             raise ValueError(f"No se pudo validar el símbolo en {exchange}: {exc}")
-    if ex == "dydx":
-        # No se valida aquí; se asume símbolo dYdX válido.
+    if ex in {"dydx", "bybit"}:
         return
     if sym in FALLBACK_SYMBOLS.get(ex, set()):
         return
