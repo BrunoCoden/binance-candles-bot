@@ -20,12 +20,11 @@ class BybitClient(ExchangeClient):
     def _build_client(self, credential: ExchangeCredential):
         api_key, api_secret = credential.resolve_keys(os.environ)
         is_testnet = credential.environment != ExchangeEnvironment.LIVE
-        # pybit v5 unified trading; allow override of domain.
+        # pybit v5 unified trading; allow optional custom domain.
         domain_env = os.getenv("BYBIT_DOMAIN_TESTNET" if is_testnet else "BYBIT_DOMAIN")
-        if not domain_env:
-            domain_env = "api-demo.bybit.com" if is_testnet else "api.bybit.com"
-        # Cuando se provee domain, evitamos el prefijo interno de testnet para usar el host exacto.
-        return HTTP(api_key=api_key, api_secret=api_secret, testnet=False, domain=domain_env)
+        if domain_env:
+            return HTTP(api_key=api_key, api_secret=api_secret, testnet=False, domain=domain_env)
+        return HTTP(api_key=api_key, api_secret=api_secret, testnet=is_testnet)
 
     @staticmethod
     def _quantize(value: float, step: str) -> str:
