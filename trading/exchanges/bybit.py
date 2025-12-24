@@ -20,8 +20,11 @@ class BybitClient(ExchangeClient):
     def _build_client(self, credential: ExchangeCredential):
         api_key, api_secret = credential.resolve_keys(os.environ)
         is_testnet = credential.environment != ExchangeEnvironment.LIVE
-        # pybit v5 unified trading
-        return HTTP(api_key=api_key, api_secret=api_secret, testnet=is_testnet)
+        # pybit v5 unified trading; allow override of domain.
+        domain_env = os.getenv("BYBIT_DOMAIN_TESTNET" if is_testnet else "BYBIT_DOMAIN")
+        if not domain_env:
+            domain_env = "https://api-demo.bybit.com" if is_testnet else "https://api.bybit.com"
+        return HTTP(api_key=api_key, api_secret=api_secret, testnet=is_testnet, domain=domain_env)
 
     @staticmethod
     def _quantize(value: float, step: str) -> str:
