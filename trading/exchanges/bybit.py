@@ -8,7 +8,7 @@ from pybit.unified_trading import HTTP
 
 from .base import ExchangeClient, ExchangeRegistry
 from ..accounts.models import AccountConfig, ExchangeCredential, ExchangeEnvironment
-from ..orders.models import OrderRequest, OrderResponse, CancelRequest, CancelResponse
+from ..orders.models import OrderRequest, OrderResponse, CancelRequest, CancelResponse, OrderSide, OrderType
 from ..utils.logging import get_logger
 
 logger = get_logger("trading.exchanges.bybit")
