@@ -19,11 +19,13 @@ class BybitClient(ExchangeClient):
 
     def _build_client(self, credential: ExchangeCredential):
         api_key, api_secret = credential.resolve_keys(os.environ)
-        base_url = os.getenv(
-            "BYBIT_BASE_URL",
-            "https://api.bybit.com" if credential.environment == ExchangeEnvironment.LIVE else "https://api-testnet.bybit.com",
+        # SDK 0.2.x infiere los endpoints estándar con el flag test (True=testnet, False=live).
+        # No acepta parámetro domain, por lo que usamos la ruta por defecto del SDK.
+        return bybit(
+            test=credential.environment != ExchangeEnvironment.LIVE,
+            api_key=api_key,
+            api_secret=api_secret,
         )
-        return bybit(test=credential.environment != ExchangeEnvironment.LIVE, api_key=api_key, api_secret=api_secret, domain=base_url)
 
     @staticmethod
     def _quantize(value: float, step: str) -> str:

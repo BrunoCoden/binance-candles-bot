@@ -38,6 +38,17 @@ SECONDARY_ENV_PATH = Path("/etc/systemd/system/bot.env")
 FALLBACK_SYMBOLS = {"binance": {"ETHUSDT", "BTCUSDT"}, "bybit": {"ETHUSDT", "BTCUSDT"}}
 
 
+def _normalize_identifier(value: str) -> str:
+    """Normaliza IDs para usarlos en nombres de variables (sin espacios)."""
+    cleaned = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in value.strip())
+    # Compacta guiones/underscores múltiples
+    while "__" in cleaned:
+        cleaned = cleaned.replace("__", "_")
+    while "--" in cleaned:
+        cleaned = cleaned.replace("--", "-")
+    return cleaned.strip("_-")
+
+
 def _load_manager(path: Path) -> AccountManager:
     try:
         return AccountManager.from_file(path)
@@ -115,7 +126,8 @@ def _validate_symbol(exchange: str, environment: ExchangeEnvironment, symbol: st
 
 
 def _generate_env_names(user_id: str, exchange: str, environment: ExchangeEnvironment) -> tuple[str, str]:
-    base = f"{user_id}_{exchange}_{environment.value}".upper().replace("-", "_")
+    normalized_user = _normalize_identifier(user_id)
+    base = f"{normalized_user}_{exchange}_{environment.value}".upper().replace("-", "_")
     return f"{base}_API_KEY", f"{base}_API_SECRET"
 
 
