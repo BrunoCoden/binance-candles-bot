@@ -4,7 +4,7 @@ import os
 from typing import Any, Dict, Optional, List
 from decimal import Decimal, ROUND_DOWN
 
-from bybit import bybit
+from pybit.unified_trading import HTTP
 
 from .base import ExchangeClient, ExchangeRegistry
 from ..accounts.models import AccountConfig, ExchangeCredential, ExchangeEnvironment
@@ -19,13 +19,9 @@ class BybitClient(ExchangeClient):
 
     def _build_client(self, credential: ExchangeCredential):
         api_key, api_secret = credential.resolve_keys(os.environ)
-        # SDK 0.2.x infiere los endpoints estándar con el flag test (True=testnet, False=live).
-        # No acepta parámetro domain, por lo que usamos la ruta por defecto del SDK.
-        return bybit(
-            test=credential.environment != ExchangeEnvironment.LIVE,
-            api_key=api_key,
-            api_secret=api_secret,
-        )
+        is_testnet = credential.environment != ExchangeEnvironment.LIVE
+        # pybit v5 unified trading
+        return HTTP(api_key=api_key, api_secret=api_secret, testnet=is_testnet)
 
     @staticmethod
     def _quantize(value: float, step: str) -> str:
@@ -35,22 +31,17 @@ class BybitClient(ExchangeClient):
         return format(dv, "f")
 
     def _format_order_params(self, order: OrderRequest) -> Dict[str, Any]:
-        # Bybit USDT perpetual (linear). Ajustar symbol si se parametriza.
         params: Dict[str, Any] = {
+            "category": "linear",  # USDT Perp
             "symbol": order.symbol,
-            "side": order.side.value.capitalize(),  # BUY/SELL
-            "order_type": order.type.value.capitalize(),  # MARKET/LIMIT
+            "side": "Buy" if order.side == OrderSide.BUY else "Sell",
+            "orderType": "Market" if order.type == OrderType.MARKET else "Limit",
             "qty": self._quantize(order.quantity, "0.001"),
-            "reduce_only": order.reduce_only,
-            "time_in_force": "GoodTillCancel",  # por defecto; Bybit ignora TIF en MARKET
+            "reduceOnly": order.reduce_only,
         }
-        if order.type.value == "LIMIT" and order.price:
+        if order.type == OrderType.LIMIT and order.price:
             params["price"] = self._quantize(order.price, "0.1")
-            if not order.reduce_only:
-                params["order_link_id"] = order.client_order_id or None
-        elif order.type.value == "MARKET":
-            # Bybit no requiere price/TIF en MARKET; no mandar postOnly
-            params.pop("time_in_force", None)
+            params["timeInForce"] = "GTC"
         return params
 
     def place_order(
@@ -85,13 +76,9 @@ class BybitClient(ExchangeClient):
         try:
             client = self._build_client(credential)
             params = self._format_order_params(order)
-            resp = client.Order.Order_new(**params).result()
-            raw = resp[0] if isinstance(resp, tuple) else resp
-            order_id = ""
-            status = "NEW"
-            if isinstance(raw, dict):
-                order_id = str(raw.get("order_id") or raw.get("result", {}).get("order_id") or "")
-                status = raw.get("status") or raw.get("ret_msg") or "NEW"
+            raw = client.place_order(**params)
+            order_id = str(raw.get("result", {}).get("orderId") or "")
+            status = raw.get("result", {}).get("orderStatus") or raw.get("retMsg") or "NEW"
             return OrderResponse(
                 success=True,
                 status=status,
@@ -117,8 +104,12 @@ class BybitClient(ExchangeClient):
             return CancelResponse(success=True, raw={"dry_run": True})
         try:
             client = self._build_client(credential)
-            resp = client.Order.Order_cancel(symbol=request.symbol, order_id=request.exchange_order_id).result()
-            raw = resp[0] if isinstance(resp, tuple) else resp
+            raw = client.cancel_order(
+                category="linear",
+                symbol=request.symbol,
+                orderId=request.exchange_order_id,
+                orderLinkId=request.client_order_id,
+            )
             return CancelResponse(success=True, raw={"resp": raw})
         except Exception as exc:  # pragma: no cover - externo
             logger.exception("Error cancelando orden en Bybit: %s", exc)
@@ -131,11 +122,9 @@ class BybitClient(ExchangeClient):
     ) -> Dict[str, float]:
         try:
             client = self._build_client(credential)
-            resp = client.Wallet.Wallet_getBalance(coin="USDT").result()
-            raw = resp[0] if isinstance(resp, tuple) else resp
-            if isinstance(raw, dict):
-                bal = raw.get("result", {}).get("USDT", {}).get("wallet_balance")
-                return {"USDT": float(bal) if bal is not None else 0.0}
+            raw = client.get_wallet_balance(accountType="UNIFIED", coin="USDT")
+            bal = raw.get("result", {}).get("list", [{}])[0].get("coin", [{}])[0].get("walletBalance")
+            return {"USDT": float(bal) if bal is not None else 0.0}
         except Exception:  # pragma: no cover - externo
             return {"USDT": 0.0}
         return {"USDT": 0.0}
