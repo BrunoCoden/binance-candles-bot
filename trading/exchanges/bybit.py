@@ -24,7 +24,8 @@ class BybitClient(ExchangeClient):
         domain_env = os.getenv("BYBIT_DOMAIN_TESTNET" if is_testnet else "BYBIT_DOMAIN")
         if not domain_env:
             domain_env = "https://api-demo.bybit.com" if is_testnet else "https://api.bybit.com"
-        return HTTP(api_key=api_key, api_secret=api_secret, testnet=is_testnet, domain=domain_env)
+        # Cuando se provee domain, evitamos el prefijo interno de testnet para usar el host exacto.
+        return HTTP(api_key=api_key, api_secret=api_secret, testnet=False, domain=domain_env)
 
     @staticmethod
     def _quantize(value: float, step: str) -> str:
