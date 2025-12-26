@@ -29,7 +29,6 @@ TRADING_MIN_NOTIONAL = float(os.getenv("WATCHER_MIN_NOTIONAL_USDT", "20"))
 _executor: OrderExecutor | None = None
 _account_manager: AccountManager | None = None
 _last_order_direction: dict[tuple[str, str], str] = {}
-_pending_signals: list[dict] = []
 _thresholds: list[dict] = []
 THRESHOLDS_PATH = Path("backtest/backtestTR/pending_thresholds.json")
 LOSS_PCT = 0.05  # 5% en contra
@@ -643,7 +642,6 @@ def _notify_startup():
 
 def main():
     seen = []
-    interval_sec = _interval_seconds(STREAM_INTERVAL)
     _notify_startup()
     last_threshold_check = 0.0
     while True:
@@ -662,45 +660,22 @@ def main():
                 continue
             seen.append(key)
             seen[:] = seen[-MAX_SEEN:]
-
-            print(f"[ALERTA] {format_alert_message(evt)}")
-            # Agenda para la siguiente vela (cierre + 1 intervalo)
-            ts = evt.get("timestamp")
+            alerts_to_send = [evt]
+            # Evalúa umbrales de cierre con el precio de la señal actual
             try:
-                if ts is None:
-                    ts = datetime.now(timezone.utc)
-                elif isinstance(ts, str):
-                    ts = datetime.fromisoformat(ts)
-                elif ts.tzinfo is None:
-                    ts = ts.replace(tzinfo=timezone.utc)
-                execute_at = ts + timedelta(seconds=interval_sec)
-            except Exception:
-                ts = datetime.now(timezone.utc)
-                execute_at = ts + timedelta(seconds=interval_sec)
-            _pending_signals.append({"execute_at": execute_at, "event": evt})
-
-        # Ejecuta alertas pendientes cuyo tiempo ya venció
-        now_utc = datetime.now(timezone.utc)
-        due = [p for p in _pending_signals if p["execute_at"] <= now_utc]
-        _pending_signals[:] = [p for p in _pending_signals if p["execute_at"] > now_utc]
-
-        if due:
-            alerts_to_send = [p["event"] for p in due]
-            # Usa el precio del primer evento pendiente como referencia para evaluar umbrales
-            try:
-                current_price = _price_from_event(alerts_to_send[0]) if alerts_to_send else None
+                current_price = _price_from_event(evt)
                 if current_price:
-                    ts_eval = alerts_to_send[0].get("timestamp", datetime.now(timezone.utc))
+                    ts_eval = evt.get("timestamp", datetime.now(timezone.utc))
                     alerts_to_send.extend(_evaluate_thresholds(current_price, ts_eval))
             except Exception:
                 pass
+            print(f"[ALERTA] {format_alert_message(evt)}")
             try:
                 send_alerts(alerts_to_send)
             except Exception as exc:
                 print(f"[ALERT][WARN] Falló envío de alertas ({exc})")
             if TRADING_ENABLED:
-                for item in due:
-                    _submit_trade(item["event"])
+                _submit_trade(evt)
 
         # Chequeo periódico de umbrales aunque no haya nuevas alertas
         now_ts = time.time()
@@ -718,12 +693,12 @@ def main():
                 except Exception:
                     pass
                 if current_price:
-                ts_eval = datetime.now(timezone.utc)
-                try:
-                    extra_alerts = _evaluate_thresholds(current_price, ts_eval)
-                    if extra_alerts:
-                        send_alerts(extra_alerts)
-                except Exception as exc:
+                    ts_eval = datetime.now(timezone.utc)
+                    try:
+                        extra_alerts = _evaluate_thresholds(current_price, ts_eval)
+                        if extra_alerts:
+                            send_alerts(extra_alerts)
+                    except Exception as exc:
                         print(f"[ALERT][WARN] Falló evaluación periódica de umbrales ({exc})")
             except Exception:
                 pass

@@ -69,7 +69,7 @@ users:
       api_key_env: DIEGO_BYBIT_API_KEY_LIVE
       api_secret_env: DIEGO_BYBIT_API_SECRET_LIVE
       environment: live
-      notional_usdt: 100.0
+      notional_usdt: 25.0
       leverage: 5
       extra:
         symbol: ETHUSDT
