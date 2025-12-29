@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -36,6 +37,53 @@ DEFAULT_ENV_PATH = Path(os.getenv("DASHCRUD_ENV_PATH", "/home/ubuntu/bot/.env"))
 # Path secundario opcional para compatibilidad (systemd env file)
 SECONDARY_ENV_PATH = Path("/etc/systemd/system/bot.env")
 FALLBACK_SYMBOLS = {"binance": {"ETHUSDT", "BTCUSDT"}, "bybit": {"ETHUSDT", "BTCUSDT"}}
+PENDING_APPLY_PATH = Path(os.getenv("DASHCRUD_PENDING_PATH", "trading/accounts/.dashcrud_pending.json"))
+APPLY_SERVICES = [
+    s.strip()
+    for s in os.getenv("DASHCRUD_APPLY_SERVICES", "bot-watcher.service").split(",")
+    if s.strip()
+]
+
+
+def _load_pending() -> dict:
+    try:
+        if not PENDING_APPLY_PATH.exists():
+            return {"pending": False, "changes": []}
+        data = json.loads(PENDING_APPLY_PATH.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            return {"pending": True, "changes": []}
+        changes = data.get("changes") if isinstance(data.get("changes"), list) else []
+        return {
+            "pending": bool(data.get("pending", True)),
+            "updated_at": data.get("updated_at"),
+            "changes": changes,
+        }
+    except Exception:
+        return {"pending": True, "changes": []}
+
+
+def _mark_pending(change: dict) -> None:
+    try:
+        PENDING_APPLY_PATH.parent.mkdir(parents=True, exist_ok=True)
+        state = _load_pending()
+        changes = state.get("changes") if isinstance(state.get("changes"), list) else []
+        changes.append(change)
+        out = {
+            "pending": True,
+            "updated_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+            "changes": changes[-200:],
+        }
+        PENDING_APPLY_PATH.write_text(json.dumps(out, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _clear_pending() -> None:
+    try:
+        if PENDING_APPLY_PATH.exists():
+            PENDING_APPLY_PATH.unlink()
+    except Exception:
+        pass
 
 
 def _normalize_identifier(value: str) -> str:
@@ -47,6 +95,18 @@ def _normalize_identifier(value: str) -> str:
     while "--" in cleaned:
         cleaned = cleaned.replace("--", "-")
     return cleaned.strip("_-")
+
+
+_ENV_VAR_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _validate_env_var_name(name: str, field: str) -> str:
+    candidate = (name or "").strip()
+    if not candidate:
+        raise ValueError(f"{field} es obligatorio.")
+    if not _ENV_VAR_RE.match(candidate):
+        raise ValueError(f"{field} inválido: '{candidate}'. Usá solo A-Z 0-9 y '_' (sin espacios).")
+    return candidate
 
 
 def _load_manager(path: Path) -> AccountManager:
@@ -88,7 +148,8 @@ def _serialize(manager: AccountManager, accounts_path: Path) -> dict:
                 "exchanges": exchanges,
             }
         )
-    return {"accounts_path": str(accounts_path), "users": out}
+    pending = _load_pending()
+    return {"accounts_path": str(accounts_path), "pending": pending, "users": out}
 
 
 def _validate_symbol(exchange: str, environment: ExchangeEnvironment, symbol: str) -> None:
@@ -214,6 +275,8 @@ def _build_credential(payload: Dict[str, Any], default_name: str | None = None, 
         if not api_key_env or not api_secret_env:
             gen_key, gen_secret = _generate_env_names(user_id, name, environment)
             api_key_env, api_secret_env = gen_key, gen_secret
+        api_key_env = _validate_env_var_name(api_key_env, "api_key_env")
+        api_secret_env = _validate_env_var_name(api_secret_env, "api_secret_env")
         _set_env_vars(env_path, {api_key_env: api_key_plain, api_secret_env: api_secret_plain})
         # Compatibilidad: también intentamos escribir en /etc/systemd/system/bot.env si existe o se puede
         try:
@@ -223,6 +286,8 @@ def _build_credential(payload: Dict[str, Any], default_name: str | None = None, 
 
     if not api_key_env or not api_secret_env:
         raise ValueError("api_key_env y api_secret_env son obligatorios (o provée keys en texto para generarlas).")
+    api_key_env = _validate_env_var_name(api_key_env, "api_key_env")
+    api_secret_env = _validate_env_var_name(api_secret_env, "api_secret_env")
 
     symbol = str(payload.get("symbol") or payload.get("pair") or "").strip().upper()
     if not symbol and name == "dydx":
@@ -286,7 +351,7 @@ class DashCRUDHandler(BaseHTTPRequestHandler):
     def log_message(self, fmt: str, *args: Any) -> None:  # noqa: D401
         """Log mínimo a stdout."""
         msg = fmt % args
-        print(f"[HTTP] {self.address_string()} {msg}")
+        print(f"[HTTP] {self.address_string()} {msg}", flush=True)
 
     # --- Helpers -------------------------------------------------- #
     def _read_json(self) -> dict | None:
@@ -346,6 +411,11 @@ class DashCRUDHandler(BaseHTTPRequestHandler):
         if path == "/":
             self._serve_html()
             return
+        if path == "/favicon.ico":
+            self.send_response(204)
+            self.send_header("Cache-Control", "public, max-age=86400")
+            self.end_headers()
+            return
         if parts[:2] == ["api", "accounts"]:
             if len(parts) == 2:
                 self._send_json(200, self._snapshot())
@@ -362,9 +432,38 @@ class DashCRUDHandler(BaseHTTPRequestHandler):
                 return
         self.send_error(404, "Ruta no encontrada")
 
+    def do_HEAD(self) -> None:  # noqa: N802
+        parsed = urlparse(self.path)
+        path = parsed.path.rstrip("/") or "/"
+        if path == "/favicon.ico":
+            self.send_response(204)
+            self.send_header("Cache-Control", "public, max-age=86400")
+            self.end_headers()
+            return
+        if path == "/":
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.end_headers()
+            return
+        self.send_error(404, "Ruta no encontrada")
+
     def do_POST(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
         parts = [unquote(p) for p in parsed.path.split("/") if p]
+        if parts == ["api", "apply"]:
+            ok, err = _restart_services(APPLY_SERVICES)
+            resp = self._snapshot()
+            if ok:
+                _clear_pending()
+                resp["applied"] = True
+                resp["message"] = f"Servicios reiniciados: {', '.join(APPLY_SERVICES)}"
+                print(f"[DASHCRUD][APPLY] ok services={APPLY_SERVICES}", flush=True)
+            else:
+                resp["applied"] = False
+                resp["error"] = f"No se pudieron reiniciar servicios: {err or 'unknown error'}"
+                print(f"[DASHCRUD][APPLY] error services={APPLY_SERVICES} err={err}", flush=True)
+            self._send_json(200 if ok else 500, resp)
+            return
         if parts == ["api", "accounts"]:
             payload = self._read_json()
             if payload is None:
@@ -389,6 +488,7 @@ class DashCRUDHandler(BaseHTTPRequestHandler):
                     self._send_json(400, {"error": str(exc)})
                     return
             _save_with_backup(self.manager, self.accounts_path)
+            _mark_pending({"type": "account_create", "user_id": user_id, "ts": datetime.utcnow().isoformat(timespec="seconds") + "Z"})
             tmp_manager = AccountManager([account])
             self._send_json(201, _serialize(tmp_manager, self.accounts_path))
             return
@@ -434,6 +534,7 @@ class DashCRUDHandler(BaseHTTPRequestHandler):
                 enabled=enabled if enabled is not None else None,
             )
             _save_with_backup(self.manager, self.accounts_path)
+            _mark_pending({"type": "account_update", "user_id": user_id, "ts": datetime.utcnow().isoformat(timespec="seconds") + "Z"})
             self._send_json(200, self._snapshot())
             return
 
@@ -453,11 +554,17 @@ class DashCRUDHandler(BaseHTTPRequestHandler):
             account.exchanges = {}
             self.manager.upsert_exchange(user_id, cred)
             _save_with_backup(self.manager, self.accounts_path)
-            ok, err = _restart_services(["bot-watcher.service", "bot-strategy.service", "bot-order-listener.service"])
-            resp = self._snapshot()
-            if not ok and err:
-                resp["warning"] = f"No se pudieron reiniciar servicios: {err}"
-            self._send_json(200, resp)
+            _mark_pending(
+                {
+                    "type": "exchange_save",
+                    "user_id": user_id,
+                    "exchange": cred.exchange,
+                    "environment": cred.environment.value,
+                    "ts": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+                }
+            )
+            print(f"[DASHCRUD][SAVE] exchange user={user_id} ex={cred.exchange} env={cred.environment.value}")
+            self._send_json(200, self._snapshot())
             return
 
         self.send_error(404, "Ruta no encontrada")

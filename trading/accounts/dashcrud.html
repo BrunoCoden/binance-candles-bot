@@ -123,9 +123,13 @@
     .status.error { border-color: rgba(239,68,68,0.5); color: #fecdd3; }
     .status.success { border-color: rgba(34,197,94,0.5); color: #bbf7d0; }
     .list-empty { border: 1px dashed var(--border); border-radius: 10px; padding: 12px; text-align: center; color: var(--muted); }
+    .apply-bar { display: flex; flex-direction: column; gap: 8px; align-items: flex-end; }
+    .pending { display: inline-flex; gap: 8px; align-items: center; }
+    .pending-dot { width: 8px; height: 8px; border-radius: 999px; background: rgba(245,158,11,0.9); box-shadow: 0 0 0 3px rgba(245,158,11,0.15); }
     @media (max-width: 720px) {
       body { padding: 18px 12px 40px; }
       .hero { flex-direction: column; align-items: flex-start; }
+      .apply-bar { align-items: flex-start; }
     }
   </style>
 </head>
@@ -136,7 +140,14 @@
       <h1>Gestión de cuentas y exchanges</h1>
       <div class="muted">Crea/edita usuarios, habilita/deshabilita y define notional/leverage por exchange.</div>
     </div>
-    <div class="path-line muted" id="accounts-path">Archivo: -</div>
+    <div class="apply-bar">
+      <div class="path-line muted" id="accounts-path">Archivo: -</div>
+      <div class="pending muted" id="pending-wrap" style="display:none;">
+        <span class="pending-dot"></span>
+        <span id="pending-label">Cambios pendientes</span>
+      </div>
+      <button class="btn secondary" type="button" id="apply-btn" disabled>Resetear Watcher para aplicar cambios</button>
+    </div>
   </div>
 
   <div id="status" class="status"></div>
@@ -291,6 +302,9 @@
     const wrapMaxPosUsdc = document.getElementById("wrap-maxpos-usdc");
     const wrapMarginMode = document.getElementById("wrap-margin-mode");
     const accPathLabel = document.getElementById("accounts-path");
+    const pendingWrap = document.getElementById("pending-wrap");
+    const pendingLabel = document.getElementById("pending-label");
+    const applyBtn = document.getElementById("apply-btn");
 
     function showStatus(msg, type = "info") {
       statusEl.textContent = msg;
@@ -398,8 +412,6 @@
           exSecret.value = ex.api_secret_env || "";
           exKeyPlain.value = "";
           exSecretPlain.value = "";
-          exPassphrasePlain.value = "";
-          exStarkPlain.value = "";
           exNotional.value = ex.notional_usdt ?? "";
           exNotionalUsdc.value = ex.notional_usdc ?? "";
           exMaxPosUsdc.value = ex.max_position_usdc ?? "";
@@ -545,6 +557,12 @@
         const data = await api("/api/accounts");
         state.users = data.users || [];
         accPathLabel.textContent = `Archivo: ${data.accounts_path || "-"}`;
+        const pending = data.pending || {};
+        const isPending = !!pending.pending;
+        const count = Array.isArray(pending.changes) ? pending.changes.length : 0;
+        pendingWrap.style.display = isPending ? "inline-flex" : "none";
+        if (isPending) pendingLabel.textContent = `Cambios pendientes: ${count}`;
+        applyBtn.disabled = !isPending;
         renderUsers();
         renderUserSelect();
         if (state.lastSavedId && state.users.find((u) => u.id === state.lastSavedId)) {
@@ -557,11 +575,25 @@
       } catch (err) { showStatus(err.message, "error"); }
     }
 
+    async function handleApply() {
+      clearStatus();
+      applyBtn.disabled = true;
+      try {
+        const resp = await api("/api/apply", { method: "POST", body: {} });
+        showStatus(resp.message || "Watcher reseteado", "success");
+      } catch (err) {
+        showStatus(err.message || "No se pudo resetear el watcher", "error");
+      } finally {
+        await loadData();
+      }
+    }
+
     document.getElementById("account-form").addEventListener("submit", handleAccountSubmit);
     document.getElementById("acc-reset").addEventListener("click", resetAccountForm);
     document.getElementById("exchange-form").addEventListener("submit", handleExchangeSubmit);
     document.getElementById("ex-reset").addEventListener("click", resetExchangeForm);
     exName.addEventListener("change", () => toggleDydxFields(exName.value));
+    applyBtn.addEventListener("click", handleApply);
 
     loadData();
     toggleDydxFields(exName.value);

@@ -19,29 +19,38 @@ TRADING_ENABLED = os.getenv("WATCHER_ENABLE_TRADING", "false").lower() == "true"
 TRADING_ACCOUNTS_FILE = os.getenv("WATCHER_ACCOUNTS_FILE", "trading/accounts/sample_accounts.yaml")
 TRADING_USER_ID = os.getenv("WATCHER_TRADING_USER", "").strip()
 TRADING_EXCHANGE = os.getenv("WATCHER_TRADING_EXCHANGE", "").strip()
-TRADING_DEFAULT_QTY = os.getenv("WATCHER_TRADING_DEFAULT_QTY", "0.01")
-# Si se indica, calcula cantidad a partir de un notional USDT (qty = notional / price)
-TRADING_DEFAULT_NOTIONAL_USDT = float(os.getenv("WATCHER_TRADING_NOTIONAL_USDT", "0") or 0)
 TRADING_DRY_RUN = os.getenv("WATCHER_TRADING_DRY_RUN", "true").lower() != "false"
 TRADING_MIN_PRICE = float(os.getenv("WATCHER_TRADING_MIN_PRICE", "0"))
-TRADING_MIN_NOTIONAL = float(os.getenv("WATCHER_MIN_NOTIONAL_USDT", "20"))
 
 _executor: OrderExecutor | None = None
 _account_manager: AccountManager | None = None
+_accounts_mtime: float | None = None
 _last_order_direction: dict[tuple[str, str], str] = {}
 _thresholds: list[dict] = []
 THRESHOLDS_PATH = Path("backtest/backtestTR/pending_thresholds.json")
 LOSS_PCT = 0.05  # 5% en contra
 GAIN_PCT = 0.09  # 9% a favor
+ACCOUNTS_AUTO_RELOAD = os.getenv("WATCHER_ACCOUNTS_AUTO_RELOAD", "false").lower() == "true"
 
 
 def _load_manager() -> AccountManager | None:
-    global _account_manager
+    global _account_manager, _accounts_mtime, _executor
     if not TRADING_ENABLED:
         return None
     try:
         path = Path(TRADING_ACCOUNTS_FILE)
+        try:
+            current_mtime = path.stat().st_mtime
+        except FileNotFoundError:
+            current_mtime = None
+        if not ACCOUNTS_AUTO_RELOAD and _account_manager is not None:
+            return _account_manager
+        if _account_manager is not None and _accounts_mtime is not None and current_mtime == _accounts_mtime:
+            return _account_manager
         _account_manager = AccountManager.from_file(path)
+        _accounts_mtime = current_mtime
+        _executor = None
+        print(f"[WATCHER][INFO] Cuentas recargadas desde {path} (mtime={_accounts_mtime})")
         return _account_manager
     except Exception as exc:
         print(f"[WATCHER][WARN] No se pudo inicializar AccountManager ({exc}); modo trading deshabilitado.")
@@ -131,7 +140,7 @@ def _direction_to_side(direction: str | None) -> OrderSide:
 
 def _resolve_quantity(event: dict, notional_usdt: float | None = None) -> float:
     price = _price_from_event(event)
-    # Prioridad: cantidad explícita en evento -> notional USDT -> qty por defecto
+    # Prioridad: cantidad explícita en evento -> notional USDT (desde DashCRUD/YAML por usuario/exchange)
     qty_raw = event.get("quantity")
     if qty_raw:
         qty = float(str(qty_raw).replace(",", "."))
@@ -139,22 +148,13 @@ def _resolve_quantity(event: dict, notional_usdt: float | None = None) -> float:
             raise ValueError("quantity debe ser > 0")
         return qty
 
-    notional_source = notional_usdt if notional_usdt and notional_usdt > 0 else TRADING_DEFAULT_NOTIONAL_USDT
-    if notional_source > 0:
-        if price is None or price <= 0:
-            raise ValueError("No se puede calcular qty desde notional: precio ausente/ inválido.")
-        target_notional = max(notional_source, TRADING_MIN_NOTIONAL)
-        # Ajusta qty al múltiplo de step (ETHUSDT: 0.001) hacia arriba para cumplir notional mínimo
-        step = 0.001
-        raw_qty = target_notional / float(price)
-        qty = math.ceil(raw_qty / step) * step
-        if qty <= 0:
-            raise ValueError("quantity calculada debe ser > 0")
-        return qty
-
-    qty = float(str(TRADING_DEFAULT_QTY).replace(",", "."))
+    if notional_usdt is None or notional_usdt <= 0:
+        raise ValueError("Sin notional_usdt (configurarlo por usuario/exchange en DashCRUD).")
+    if price is None or price <= 0:
+        raise ValueError("No se puede calcular qty desde notional: precio ausente/ inválido.")
+    qty = float(notional_usdt) / float(price)
     if qty <= 0:
-        raise ValueError("quantity por defecto debe ser > 0")
+        raise ValueError("quantity calculada debe ser > 0")
     return qty
 
 
@@ -527,6 +527,8 @@ def _submit_trade(event: dict) -> None:
         symbol = event.get("symbol") or SYMBOL_DISPLAY.replace(".P", "")
         if cred and cred.extra:
             symbol = cred.extra.get("symbol", symbol)
+
+        # Nota: no hay overrides por env para el monto. El sizing sale del YAML (DashCRUD) por usuario/exchange.
         had_opposite = _has_opposite_position(user_id, exchange, direction, symbol)
         # Si hay posición opuesta, envía cierre reduceOnly y entrada simultánea en el mismo precio.
         # Se mantienen TP/SL previos hasta que el cierre se ejecute.
