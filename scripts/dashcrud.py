@@ -8,9 +8,12 @@ DashCRUD: dashboard mínimo para CRUD de cuentas/exchanges.
 from __future__ import annotations
 
 import argparse
+import base64
+import hmac
 import json
 import os
 import re
+import ssl
 import sys
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -353,6 +356,33 @@ class DashCRUDHandler(BaseHTTPRequestHandler):
         msg = fmt % args
         print(f"[HTTP] {self.address_string()} {msg}", flush=True)
 
+    def _require_basic_auth(self) -> bool:
+        user = os.getenv("DASHCRUD_BASIC_AUTH_USER", "")
+        password = os.getenv("DASHCRUD_BASIC_AUTH_PASSWORD", "")
+        if not user or not password:
+            return True  # auth deshabilitada si no se configuró
+        header = self.headers.get("Authorization") or ""
+        if not header.startswith("Basic "):
+            self._send_auth_challenge()
+            return False
+        try:
+            raw = base64.b64decode(header.split(" ", 1)[1]).decode("utf-8")
+            given_user, given_pass = raw.split(":", 1)
+        except Exception:
+            self._send_auth_challenge()
+            return False
+        ok = hmac.compare_digest(given_user, user) and hmac.compare_digest(given_pass, password)
+        if not ok:
+            self._send_auth_challenge()
+            return False
+        return True
+
+    def _send_auth_challenge(self) -> None:
+        self.send_response(401)
+        self.send_header("WWW-Authenticate", 'Basic realm="DashCRUD", charset="UTF-8"')
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+
     # --- Helpers -------------------------------------------------- #
     def _read_json(self) -> dict | None:
         length = int(self.headers.get("Content-Length", "0") or 0)
@@ -408,6 +438,8 @@ class DashCRUDHandler(BaseHTTPRequestHandler):
         path = parsed.path.rstrip("/") or "/"
         parts = [unquote(p) for p in path.split("/") if p]
 
+        if path not in {"/favicon.ico"} and not self._require_basic_auth():
+            return
         if path == "/":
             self._serve_html()
             return
@@ -435,6 +467,8 @@ class DashCRUDHandler(BaseHTTPRequestHandler):
     def do_HEAD(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
         path = parsed.path.rstrip("/") or "/"
+        if path not in {"/favicon.ico"} and not self._require_basic_auth():
+            return
         if path == "/favicon.ico":
             self.send_response(204)
             self.send_header("Cache-Control", "public, max-age=86400")
@@ -450,6 +484,8 @@ class DashCRUDHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
         parts = [unquote(p) for p in parsed.path.split("/") if p]
+        if not self._require_basic_auth():
+            return
         if parts == ["api", "apply"]:
             ok, err = _restart_services(APPLY_SERVICES)
             resp = self._snapshot()
@@ -498,6 +534,8 @@ class DashCRUDHandler(BaseHTTPRequestHandler):
     def do_PUT(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
         parts = [unquote(p) for p in parsed.path.split("/") if p]
+        if not self._require_basic_auth():
+            return
         if parts[:2] != ["api", "accounts"]:
             self.send_error(404, "Ruta no encontrada")
             return
@@ -572,6 +610,8 @@ class DashCRUDHandler(BaseHTTPRequestHandler):
     def do_DELETE(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
         parts = [unquote(p) for p in parsed.path.split("/") if p]
+        if not self._require_basic_auth():
+            return
         if parts[:2] != ["api", "accounts"] or len(parts) != 3:
             self.send_error(404, "Ruta no encontrada")
             return
@@ -603,6 +643,8 @@ def main() -> int:
     parser.add_argument("--host", type=str, default="0.0.0.0", help="Host de escucha (default 0.0.0.0).")
     parser.add_argument("--port", type=int, default=8050, help="Puerto de escucha (default 8050).")
     parser.add_argument("--html", type=str, default=None, help="Ruta del HTML del dashboard.")
+    parser.add_argument("--tls-cert", type=str, default=os.getenv("DASHCRUD_TLS_CERT"), help="Ruta cert PEM para HTTPS.")
+    parser.add_argument("--tls-key", type=str, default=os.getenv("DASHCRUD_TLS_KEY"), help="Ruta key PEM para HTTPS.")
     args = parser.parse_args()
 
     accounts_path = Path(args.accounts)
@@ -611,9 +653,18 @@ def main() -> int:
     handler = _build_handler(manager, accounts_path, html_path)
 
     server = ThreadingHTTPServer((args.host, args.port), handler)
-    print(f"[INFO] DashCRUD en http://{args.host}:{args.port}")
+    if args.tls_cert and args.tls_key:
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.load_cert_chain(certfile=args.tls_cert, keyfile=args.tls_key)
+        server.socket = ctx.wrap_socket(server.socket, server_side=True)
+        scheme = "https"
+    else:
+        scheme = "http"
+    print(f"[INFO] DashCRUD en {scheme}://{args.host}:{args.port}")
     print(f"[INFO] Archivo de cuentas: {accounts_path}")
     print(f"[INFO] HTML: {html_path}")
+    if scheme == "https":
+        print(f"[INFO] TLS habilitado: cert={args.tls_cert} key={args.tls_key}")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
