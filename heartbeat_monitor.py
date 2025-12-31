@@ -33,12 +33,26 @@ DEFAULT_PROCESS_LIST = (
     "python estrategiaBollinger.py"
 )
 
+DEFAULT_SERVICE_LIST = (
+    "bot-watcher.service;"
+    "bot-heartbeat.service;"
+    "bot-order-listener.service;"
+    "bot-strategy.service;"
+    "bot-dashcrud.service"
+)
+
 
 @dataclass
 class ProcessStatus:
     label: str
     running: bool
     matches: list[str]
+
+@dataclass
+class ServiceStatus:
+    name: str
+    active: bool
+    detail: str | None = None
 
 
 def _parse_required_processes(value: str | None) -> list[str]:
@@ -54,6 +68,48 @@ def required_processes_from_env(override: str | None = None) -> list[str]:
     """
     env_value = override if override is not None else os.getenv("HEARTBEAT_PROCESSES")
     return _parse_required_processes(env_value)
+
+
+def required_services_from_env(override: str | None = None) -> list[str]:
+    """
+    Devuelve la lista de servicios systemd a monitorear usando la env HEARTBEAT_SERVICES.
+    """
+    value = override if override is not None else os.getenv("HEARTBEAT_SERVICES")
+    if not value:
+        value = DEFAULT_SERVICE_LIST
+    parts = [part.strip() for part in value.replace(",", ";").split(";")]
+    return [part for part in parts if part]
+
+
+def _evaluate_services(services: Iterable[str]) -> list[ServiceStatus]:
+    statuses: list[ServiceStatus] = []
+    for service in services:
+        try:
+            res = subprocess.run(
+                ["systemctl", "is-active", service],
+                capture_output=True,
+                text=True,
+            )
+            active = res.returncode == 0 and res.stdout.strip() == "active"
+            detail = res.stdout.strip() if res.stdout else res.stderr.strip() if res.stderr else None
+            statuses.append(ServiceStatus(name=service, active=active, detail=detail))
+        except Exception as exc:
+            statuses.append(ServiceStatus(name=service, active=False, detail=str(exc)))
+    return statuses
+
+
+def generate_systemd_heartbeat_message(services: list[str], tz: ZoneInfo | None = None) -> str:
+    tz = tz or _resolve_timezone()
+    now = datetime.now(tz)
+    statuses = _evaluate_services(services)
+    overall = "OK" if all(s.active for s in statuses) else "ALERTA"
+    lines = [f"[HEARTBEAT] {now.isoformat(timespec='seconds')}", "", f"Estado general: {overall}", ""]
+    for s in statuses:
+        state = "OK" if s.active else "FALTA"
+        lines.append(f"- {state} :: {s.name}")
+        if s.detail and s.detail != ("active" if s.active else "inactive"):
+            lines.append(f"    {s.detail}")
+    return "\n".join(lines)
 
 
 def _list_process_commands() -> Sequence[str]:

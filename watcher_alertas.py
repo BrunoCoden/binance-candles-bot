@@ -31,12 +31,129 @@ THRESHOLDS_PATH = Path("backtest/backtestTR/pending_thresholds.json")
 LOSS_PCT = 0.05  # 5% en contra
 GAIN_PCT = 0.09  # 9% a favor
 ACCOUNTS_AUTO_RELOAD = os.getenv("WATCHER_ACCOUNTS_AUTO_RELOAD", "false").lower() == "true"
+DISABLED_ACCOUNTS_AUTO_CLOSE = os.getenv("WATCHER_DISABLED_AUTO_CLOSE", "true").lower() == "true"
+DISABLED_ACCOUNTS_CLOSE_POLL_SECONDS = float(os.getenv("WATCHER_DISABLED_CLOSE_POLL_SECONDS", "30"))
+
+_last_disabled_close_attempt: dict[tuple[str, str, str], float] = {}
 
 
 def _load_manager() -> AccountManager | None:
     global _account_manager, _accounts_mtime, _executor
     if not TRADING_ENABLED:
         return None
+    try:
+        path = Path(TRADING_ACCOUNTS_FILE)
+        try:
+            current_mtime = path.stat().st_mtime
+        except FileNotFoundError:
+            current_mtime = None
+
+        if not ACCOUNTS_AUTO_RELOAD and _account_manager is not None:
+            return _account_manager
+
+        if _account_manager is not None and _accounts_mtime is not None and current_mtime == _accounts_mtime:
+            return _account_manager
+
+        _account_manager = AccountManager.from_file(path)
+        _accounts_mtime = current_mtime
+        _executor = None
+        print(f"[WATCHER][INFO] Cuentas recargadas desde {path} (mtime={_accounts_mtime})")
+        return _account_manager
+    except Exception as exc:
+        print(f"[WATCHER][WARN] No se pudo inicializar AccountManager ({exc}); modo trading deshabilitado.")
+        return None
+
+
+def _bybit_position_amount(cred: ExchangeCredential, symbol: str) -> float:
+    """
+    Devuelve cantidad firmada (long >0, short <0) para Bybit linear.
+    """
+    try:
+        from pybit.unified_trading import HTTP  # type: ignore
+
+        api_key, api_secret = cred.resolve_keys(os.environ)
+        is_testnet = cred.environment != ExchangeEnvironment.LIVE
+        domain_env = os.getenv("BYBIT_DOMAIN_TESTNET" if is_testnet else "BYBIT_DOMAIN")
+        client = (
+            HTTP(api_key=api_key, api_secret=api_secret, testnet=False, domain=domain_env)
+            if domain_env
+            else HTTP(api_key=api_key, api_secret=api_secret, testnet=is_testnet)
+        )
+        raw = client.get_positions(category="linear", symbol=symbol)
+        items = raw.get("result", {}).get("list") or []
+        if not items:
+            return 0.0
+        # Unified: size + side
+        pos = items[0]
+        size = float(pos.get("size") or 0.0)
+        side = str(pos.get("side") or "").lower()
+        if size == 0:
+            return 0.0
+        return size if side == "buy" else -size
+    except Exception:
+        return 0.0
+
+
+def _close_disabled_accounts_positions() -> None:
+    """
+    Si un usuario está enabled=false, intenta cerrar posiciones abiertas en todos sus exchanges.
+    Solo actúa si WATCHER_DISABLED_AUTO_CLOSE=true.
+    """
+    if not TRADING_ENABLED or not DISABLED_ACCOUNTS_AUTO_CLOSE:
+        return
+    manager = _load_manager()
+    if manager is None:
+        return
+    executor = _resolve_executor()
+    if executor is None:
+        return
+
+    now = time.time()
+    for account in manager.list_accounts():
+        if account.enabled:
+            continue
+        for exchange, cred in (account.exchanges or {}).items():
+            symbol = (cred.extra or {}).get("symbol") or SYMBOL_DISPLAY.replace(".P", "")
+            try:
+                pos_amt = _current_position(account.user_id, exchange, symbol)
+                # fallback específico Bybit si el helper legacy no lo soporta
+                if pos_amt == 0 and exchange.lower() == "bybit":
+                    pos_amt = _bybit_position_amount(cred, symbol)
+            except Exception:
+                pos_amt = 0.0
+            if not pos_amt:
+                continue
+
+            key = (account.user_id, exchange.lower(), str(symbol))
+            last = _last_disabled_close_attempt.get(key, 0.0)
+            if now - last < max(DISABLED_ACCOUNTS_CLOSE_POLL_SECONDS, 10.0):
+                continue
+            _last_disabled_close_attempt[key] = now
+
+            qty = abs(float(pos_amt))
+            side = OrderSide.SELL if pos_amt > 0 else OrderSide.BUY
+            order = OrderRequest(
+                symbol=symbol,
+                side=side,
+                type=OrderType.MARKET,
+                quantity=qty,
+                price=None,
+                time_in_force=TimeInForce.GTC,
+                reduce_only=True,
+                extra_params={
+                    "source_event": "disabled_auto_close",
+                    "account": account.user_id,
+                    "exchange": exchange,
+                },
+            )
+            try:
+                resp = executor.execute(account.user_id, exchange, order, dry_run=TRADING_DRY_RUN)
+                print(
+                    f"[WATCHER][AUTO_CLOSE_DISABLED] user={account.user_id} ex={exchange} symbol={symbol} "
+                    f"qty={qty} side={side.value} success={resp.success} status={resp.status}"
+                )
+            except Exception as exc:
+                print(f"[WATCHER][WARN] Auto-cierre por disabled falló user={account.user_id} ex={exchange}: {exc}")
     try:
         path = Path(TRADING_ACCOUNTS_FILE)
         try:
@@ -232,7 +349,7 @@ def _register_threshold(user_id: str, exchange: str, symbol: str, direction: str
 def _current_position(user_id: str, exchange: str, symbol: str) -> float:
     """
     Devuelve cantidad firmada de la posición actual (long >0, short <0).
-    Solo implementado para binance; si falla devuelve 0.
+    Implementado para binance/dydx/bybit; si falla devuelve 0.
     """
     try:
         if _account_manager is None:
@@ -258,6 +375,8 @@ def _current_position(user_id: str, exchange: str, symbol: str) -> float:
             market_symbol = cred.extra.get("symbol", symbol) if cred.extra else symbol
             
             return get_dydx_position(api_key, market_symbol, subaccount_number)
+        elif exchange.lower() == "bybit":
+            return _bybit_position_amount(cred, symbol)
         return 0.0
     except Exception:
         return 0.0
@@ -646,6 +765,12 @@ def main():
     seen = []
     _notify_startup()
     last_threshold_check = 0.0
+    last_disabled_check = 0.0
+    # Al iniciar, si hay cuentas disabled, intenta cerrar posiciones abiertas.
+    try:
+        _close_disabled_accounts_positions()
+    except Exception:
+        pass
     while True:
         try:
             events = generate_alerts()
@@ -681,6 +806,13 @@ def main():
 
         # Chequeo periódico de umbrales aunque no haya nuevas alertas
         now_ts = time.time()
+        # Chequeo periódico de cuentas disabled (auto-cierre)
+        if now_ts - last_disabled_check >= DISABLED_ACCOUNTS_CLOSE_POLL_SECONDS:
+            last_disabled_check = now_ts
+            try:
+                _close_disabled_accounts_positions()
+            except Exception:
+                pass
         if now_ts - last_threshold_check >= THRESHOLD_POLL_SECONDS:
             last_threshold_check = now_ts
             try:

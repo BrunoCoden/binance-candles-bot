@@ -13,7 +13,7 @@ from typing import Iterable, Optional
 import requests
 from dotenv import load_dotenv
 
-from heartbeat_monitor import generate_heartbeat_message, required_processes_from_env
+from heartbeat_monitor import generate_systemd_heartbeat_message, required_services_from_env
 
 
 def _parse_chat_ids(chat_ids_env: str | None) -> list[str]:
@@ -78,10 +78,10 @@ def _handle_command(
     chat_id: int,
     message_id: Optional[int],
     command: str,
-    required_processes: list[str],
+    required_services: list[str],
 ) -> None:
     if command.startswith("/estavivo"):
-        report = generate_heartbeat_message(required_processes)
+        report = generate_systemd_heartbeat_message(required_services)
         _send_message(token, chat_id, report, reply_to=message_id)
         return
 
@@ -103,9 +103,9 @@ def main() -> None:
         raise SystemExit("TELEGRAM_BOT_TOKEN no configurado.")
 
     allowed_chat_ids = _parse_chat_ids(os.getenv("TELEGRAM_CHAT_IDS"))
-    required_processes = required_processes_from_env(None)
-    if not required_processes:
-        raise SystemExit("HEARTBEAT_PROCESSES vacío; definí procesos a monitorear.")
+    required_services = required_services_from_env(None)
+    if not required_services:
+        raise SystemExit("HEARTBEAT_SERVICES vacío; definí servicios a monitorear.")
 
     print("[BOT] Telegram command listener iniciado.")
     offset: Optional[int] = None
@@ -139,7 +139,7 @@ def main() -> None:
                 chat_id=chat_id,
                 message_id=message.get("message_id"),
                 command=command,
-                required_processes=required_processes,
+                required_services=required_services,
             )
 
         time.sleep(1)

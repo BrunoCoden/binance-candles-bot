@@ -182,7 +182,12 @@ def _validate_symbol(exchange: str, environment: ExchangeEnvironment, symbol: st
             if sym in FALLBACK_SYMBOLS.get(ex, set()):
                 return
             raise ValueError(f"No se pudo validar el símbolo en {exchange}: {exc}")
-    if ex in {"dydx", "bybit"}:
+    if ex == "dydx":
+        # dYdX v4 usa markets tipo ETH-USD, BTC-USD, etc.
+        if re.match(r"^[A-Z0-9]+-USD$", sym):
+            return
+        raise ValueError("En dYdX el símbolo debe tener formato 'ETH-USD' (ej: ETH-USD).")
+    if ex == "bybit":
         return
     if sym in FALLBACK_SYMBOLS.get(ex, set()):
         return
