@@ -29,7 +29,12 @@ class ExchangeCredential:
     def resolve_keys(self, env: Mapping[str, str]) -> tuple[str, str]:
         api_key = env.get(self.api_key_env)
         api_secret = env.get(self.api_secret_env)
-        if not api_key or not api_secret:
+        if (
+            not api_key
+            or not api_secret
+            or api_key.strip() == self.api_key_env
+            or api_secret.strip() == self.api_secret_env
+        ):
             raise RuntimeError(
                 f"Credenciales faltantes para {self.exchange}: "
                 f"{self.api_key_env}/{self.api_secret_env}"

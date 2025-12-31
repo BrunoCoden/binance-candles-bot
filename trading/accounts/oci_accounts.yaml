@@ -104,7 +104,7 @@ users:
       notional_usdt: 20.0
       leverage: 5
       extra:
-        symbol: ETHUSD
+        symbol: ETH-USD
         subaccount: 0
       passphrase_env: null
       stark_key_env: null

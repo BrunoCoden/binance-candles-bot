@@ -30,6 +30,15 @@ class AccountManager:
 
     @classmethod
     def from_dict(cls, data: Mapping) -> "AccountManager":
+        def _flatten_extra(value: Any) -> dict:
+            if not isinstance(value, dict):
+                return {}
+            merged: dict = dict(value)
+            while isinstance(merged.get("extra"), dict):
+                nested = merged.pop("extra")
+                merged = {**nested, **merged}
+            return merged
+
         users = data.get("users") or data.get("accounts") or []
         accounts: list[AccountConfig] = []
         for entry in users:
@@ -60,21 +69,25 @@ class AccountManager:
                     max_position_usdc=float(ex_conf["max_position_usdc"]) if ex_conf.get("max_position_usdc") not in (None, "") else None,
                     margin_mode=ex_conf.get("margin_mode"),
                     extra={
-                        k: v
-                        for k, v in ex_conf.items()
-                        if k
-                        not in {
-                            "api_key_env",
-                            "api_secret_env",
-                            "environment",
-                            "notional_usdt",
-                            "leverage",
-                            "passphrase_env",
-                            "stark_key_env",
-                            "notional_usdc",
-                            "max_position_usdc",
-                            "margin_mode",
-                        }
+                        **_flatten_extra(ex_conf.get("extra")),
+                        **{
+                            k: v
+                            for k, v in ex_conf.items()
+                            if k
+                            not in {
+                                "api_key_env",
+                                "api_secret_env",
+                                "environment",
+                                "notional_usdt",
+                                "leverage",
+                                "passphrase_env",
+                                "stark_key_env",
+                                "notional_usdc",
+                                "max_position_usdc",
+                                "margin_mode",
+                                "extra",
+                            }
+                        },
                     },
                 )
                 exchanges[exchange] = cred
