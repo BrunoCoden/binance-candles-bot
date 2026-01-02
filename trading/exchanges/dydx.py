@@ -219,6 +219,12 @@ class DydxClientWrapper(ExchangeClient):
         subaccount_number = credential.extra.get("subaccount", 0) if credential.extra else 0
         market_symbol = credential.extra.get("symbol", order.symbol) if credential.extra else order.symbol
 
+        # dYdX v4 soporta permissioned keys (API Keys del dashboard) que pueden firmar en nombre de un owner.
+        # - signer_address: address que corresponde a la private key (api_secret) que firma la tx.
+        # - owner_address: address del subaccount dueño de la posición (para order_id y posiciones).
+        signer_address = (credential.extra or {}).get("signer_address") or api_key
+        owner_address = (credential.extra or {}).get("owner_address") or api_key
+
         try:
             client = self._build_client(credential)
         except Exception as exc:
@@ -226,7 +232,7 @@ class DydxClientWrapper(ExchangeClient):
             return OrderResponse(success=False, status="ERROR", error=str(exc))
 
         try:
-            wallet = self._resolve_wallet(client, api_secret, api_key)
+            wallet = self._resolve_wallet(client, api_secret, signer_address)
             pair = self._resolve_clob_pair(market_symbol)
 
             # dYdX usa quantums/subticks. Simplificamos: qty en step_base_quantums, price en subticks_per_tick.
@@ -272,7 +278,7 @@ class DydxClientWrapper(ExchangeClient):
             current_block = asyncio.run(client.latest_block_height())
             good_til_block = int(current_block + 50)
             order_flags = 0  # sin flags especiales
-            oid = order_id(api_key, subaccount_number, client_id=1, clob_pair_id=int(pair["id"]), order_flags=order_flags)
+            oid = order_id(owner_address, subaccount_number, client_id=1, clob_pair_id=int(pair["id"]), order_flags=order_flags)
             msg_order = node_order(
                 order_id=oid,
                 side=side,

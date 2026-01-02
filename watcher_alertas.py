@@ -352,11 +352,12 @@ def _current_position(user_id: str, exchange: str, symbol: str) -> float:
             # Usa wallet address + private key (formato v4 nativo)
             from trading.exchanges.dydx import get_dydx_position
             
-            api_key, _ = cred.resolve_keys(os.environ)  # api_key es la wallet address
+            api_key, _ = cred.resolve_keys(os.environ)
+            owner_address = (cred.extra or {}).get("owner_address") or api_key
             subaccount_number = cred.extra.get("subaccount", 0) if cred.extra else 0
             market_symbol = cred.extra.get("symbol", symbol) if cred.extra else symbol
             
-            return get_dydx_position(api_key, market_symbol, subaccount_number)
+            return get_dydx_position(owner_address, market_symbol, subaccount_number)
         elif exchange.lower() == "bybit":
             return _bybit_position_amount(cred, symbol)
         return 0.0
