@@ -9,6 +9,7 @@ Cliente dYdX v4 (NodeClient).
 
 import os
 import asyncio
+import re
 from decimal import Decimal, ROUND_DOWN
 from typing import Any, Dict
 
@@ -54,6 +55,9 @@ def get_dydx_position(wallet_address: str, market_symbol: str, subaccount_number
         # El indexer de dYdX v4 usa el endpoint de subaccounts
         url = f"{INDEXER_BASE}/addresses/{wallet_address}/subaccountNumber/{subaccount_number}/perpetualPositions"
         r = requests.get(url, timeout=10)
+        if r.status_code == 404:
+            # El indexer devuelve 404 cuando no hay datos para esa address/subaccount (p.ej. nunca operó).
+            return 0.0
         r.raise_for_status()
         data = r.json()
         
@@ -145,7 +149,17 @@ class DydxClientWrapper(ExchangeClient):
         return NodeClient(channel=channel, builder=builder)
 
     def _resolve_wallet(self, client: NodeClient, private_hex: str, address: str) -> Wallet:
-        private_clean = private_hex[2:] if private_hex.startswith("0x") else private_hex
+        private_clean = (private_hex or "").strip()
+        private_clean = private_clean[2:] if private_clean.lower().startswith("0x") else private_clean
+        if not private_clean:
+            raise ValueError("dYdX: api_secret vacío (se espera private key hex).")
+        if not re.fullmatch(r"[0-9a-fA-F]+", private_clean):
+            raise ValueError(
+                "dYdX: api_secret inválido; se espera hex (opcionalmente con prefijo 0x)."
+            )
+        if len(private_clean) % 2 == 1:
+            logger.warning("dYdX: api_secret hex con longitud impar; zero-padding para from_hex().")
+            private_clean = "0" + private_clean
         kp = KeyPair.from_hex(private_clean)
         acct = asyncio.run(client.get_account(address))
         return Wallet(kp, acct.account_number, acct.sequence)
