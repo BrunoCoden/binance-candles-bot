@@ -260,6 +260,17 @@
             </select>
           </label>
         </div>
+        <div class="row" id="wrap-dydx-auth" style="display:none;">
+          <label>dYdX owner_address (subaccount)
+            <input id="ex-dydx-owner" placeholder="dydx1..." />
+          </label>
+          <label>dYdX signer_address (permissioned key)
+            <input id="ex-dydx-signer" placeholder="dydx1..." />
+          </label>
+          <label>dYdX subaccount
+            <input id="ex-dydx-subaccount" type="number" step="1" min="0" placeholder="0" />
+          </label>
+        </div>
         <label>Extra (JSON opcional)
           <textarea id="ex-extra" placeholder='{"hedgeMode":"ISOLATED"}'></textarea>
         </label>
@@ -294,6 +305,9 @@
     const exNotionalUsdc = document.getElementById("ex-notional-usdc");
     const exMaxPosUsdc = document.getElementById("ex-maxpos-usdc");
     const exMarginMode = document.getElementById("ex-margin-mode");
+    const exDydxOwner = document.getElementById("ex-dydx-owner");
+    const exDydxSigner = document.getElementById("ex-dydx-signer");
+    const exDydxSubaccount = document.getElementById("ex-dydx-subaccount");
     const wrapPassphrase = null;
     const wrapStark = null;
     const wrapPassphrasePlain = null;
@@ -301,6 +315,7 @@
     const wrapNotionalUsdc = document.getElementById("wrap-notional-usdc");
     const wrapMaxPosUsdc = document.getElementById("wrap-maxpos-usdc");
     const wrapMarginMode = document.getElementById("wrap-margin-mode");
+    const wrapDydxAuth = document.getElementById("wrap-dydx-auth");
     const accPathLabel = document.getElementById("accounts-path");
     const pendingWrap = document.getElementById("pending-wrap");
     const pendingLabel = document.getElementById("pending-label");
@@ -316,7 +331,7 @@
 
     function toggleDydxFields(name) {
       const isDydx = name === "dydx";
-      [wrapNotionalUsdc, wrapMaxPosUsdc, wrapMarginMode].forEach((el) => {
+      [wrapNotionalUsdc, wrapMaxPosUsdc, wrapMarginMode, wrapDydxAuth].forEach((el) => {
         if (el) el.style.display = isDydx ? "block" : "none";
       });
       // Ajusta placeholders para dYdX (wallet address + private key)
@@ -419,6 +434,9 @@
           exLeverage.value = ex.leverage ?? "";
           exSymbol.value = ex.symbol || "";
           exExtra.value = ex.extra && Object.keys(ex.extra).length ? JSON.stringify(ex.extra, null, 2) : "";
+          exDydxOwner.value = (ex.extra && ex.extra.owner_address) ? ex.extra.owner_address : "";
+          exDydxSigner.value = (ex.extra && ex.extra.signer_address) ? ex.extra.signer_address : "";
+          exDydxSubaccount.value = (ex.extra && ex.extra.subaccount !== undefined) ? ex.extra.subaccount : "";
           toggleDydxFields(exName.value);
         }
     }
@@ -446,6 +464,9 @@
       exLeverage.value = "";
       exSymbol.value = "";
       exExtra.value = "";
+      exDydxOwner.value = "";
+      exDydxSigner.value = "";
+      exDydxSubaccount.value = "";
       toggleDydxFields(exName.value);
     }
 
@@ -498,6 +519,9 @@
           margin_mode: exMarginMode.value || null,
           leverage: exLeverage.value ? Number(exLeverage.value) : null,
           symbol: symbolVal.toUpperCase(),
+          owner_address: exDydxOwner.value.trim() || null,
+          signer_address: exDydxSigner.value.trim() || null,
+          subaccount: exDydxSubaccount.value ? Number(exDydxSubaccount.value) : null,
           extra: parseJsonSafe(exExtra.value),
         };
       }

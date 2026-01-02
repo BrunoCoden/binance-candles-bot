@@ -194,6 +194,32 @@ def _validate_symbol(exchange: str, environment: ExchangeEnvironment, symbol: st
     raise ValueError(f"No se reconoce el exchange '{exchange}' o el símbolo {sym} no está permitido.")
 
 
+_DYDX_ADDRESS_RE = re.compile(r"^dydx1[0-9a-z]{10,}$")
+
+
+def _validate_dydx_address(value: str, field: str) -> str:
+    v = (value or "").strip()
+    if not v:
+        raise ValueError(f"{field} es obligatorio para dYdX.")
+    if not _DYDX_ADDRESS_RE.match(v):
+        raise ValueError(f"{field} inválido: debe ser una address dydx1... (minúsculas).")
+    return v
+
+
+def _parse_int(value: Any, field: str, *, default: int | None = None) -> int:
+    if value in (None, "", False):
+        if default is None:
+            raise ValueError(f"{field} es obligatorio.")
+        return default
+    try:
+        parsed = int(value)
+    except Exception as exc:  # noqa: BLE001
+        raise ValueError(f"{field} inválido (se espera int).") from exc
+    if parsed < 0:
+        raise ValueError(f"{field} inválido (>= 0).")
+    return parsed
+
+
 def _generate_env_names(user_id: str, exchange: str, environment: ExchangeEnvironment) -> tuple[str, str]:
     normalized_user = _normalize_identifier(user_id)
     base = f"{normalized_user}_{exchange}_{environment.value}".upper().replace("-", "_")
@@ -311,8 +337,17 @@ def _build_credential(payload: Dict[str, Any], default_name: str | None = None, 
     leverage = int(leverage_val) if leverage_val not in (None, "", False) else None
     extra = payload.get("extra") if isinstance(payload.get("extra"), dict) else {}
     extra = {**extra, "symbol": symbol}
-    if name == "dydx" and "subaccount" not in extra:
-        extra["subaccount"] = int(payload.get("subaccount") or 0)
+    if name == "dydx":
+        # Permissioned keys (API keys del dashboard) soportan signer separado del owner.
+        if "subaccount" not in extra:
+            extra["subaccount"] = _parse_int(payload.get("subaccount"), "subaccount", default=0)
+        # Permite setear desde inputs dedicados (sin obligar a editar JSON)
+        owner_address = payload.get("owner_address") or extra.get("owner_address")
+        signer_address = payload.get("signer_address") or extra.get("signer_address")
+        if owner_address:
+            extra["owner_address"] = _validate_dydx_address(str(owner_address), "owner_address")
+        if signer_address:
+            extra["signer_address"] = _validate_dydx_address(str(signer_address), "signer_address")
 
     return ExchangeCredential(
         exchange=name,
