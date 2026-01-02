@@ -697,8 +697,10 @@ def _submit_trade(event: dict) -> None:
 
         try:
             response = executor.execute(user_id, exchange, order, dry_run=TRADING_DRY_RUN)
+            err = getattr(response, "error", None)
+            err_text = f" error={err}" if err else ""
             print(
-                f"[WATCHER][TRADE] user={user_id} ex={exchange} success={response.success} status={response.status} raw={response.raw}"
+                f"[WATCHER][TRADE] user={user_id} ex={exchange} success={response.success} status={response.status}{err_text} raw={response.raw}"
             )
             if response.success:
                 _last_order_direction[key_dir] = direction
