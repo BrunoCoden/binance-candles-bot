@@ -288,6 +288,25 @@ class DydxClientWrapper(ExchangeClient):
                 account_number=wallet.account_number,
             )
             resp = asyncio.run(client.place_order(wallet, msg_order, tx_options=tx_opts))
+            tx_resp = getattr(resp, "tx_response", None)
+            tx_code = getattr(tx_resp, "code", 0) if tx_resp is not None else 0
+            tx_log = getattr(tx_resp, "raw_log", None) if tx_resp is not None else None
+            if tx_code:
+                # dYdX devuelve un tx_response con code != 0 cuando el envío falla (p.ej. pubkey inválida).
+                # No lo consideramos "NEW": devolvemos ERROR con el raw_log para debug operativo.
+                msg = f"dYdX tx failed code={tx_code}"
+                if tx_log:
+                    msg = f"{msg} raw_log={tx_log}"
+                logger.error("%s", msg)
+                return OrderResponse(
+                    success=False,
+                    status="ERROR",
+                    exchange_order_id=None,
+                    filled_quantity=0.0,
+                    avg_price=None,
+                    error=msg,
+                    raw={"resp": str(resp), "code": int(tx_code), "raw_log": tx_log},
+                )
             return OrderResponse(
                 success=True,
                 status="NEW",
