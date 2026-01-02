@@ -154,24 +154,6 @@ def _close_disabled_accounts_positions() -> None:
                 )
             except Exception as exc:
                 print(f"[WATCHER][WARN] Auto-cierre por disabled falló user={account.user_id} ex={exchange}: {exc}")
-    try:
-        path = Path(TRADING_ACCOUNTS_FILE)
-        try:
-            current_mtime = path.stat().st_mtime
-        except FileNotFoundError:
-            current_mtime = None
-        if not ACCOUNTS_AUTO_RELOAD and _account_manager is not None:
-            return _account_manager
-        if _account_manager is not None and _accounts_mtime is not None and current_mtime == _accounts_mtime:
-            return _account_manager
-        _account_manager = AccountManager.from_file(path)
-        _accounts_mtime = current_mtime
-        _executor = None
-        print(f"[WATCHER][INFO] Cuentas recargadas desde {path} (mtime={_accounts_mtime})")
-        return _account_manager
-    except Exception as exc:
-        print(f"[WATCHER][WARN] No se pudo inicializar AccountManager ({exc}); modo trading deshabilitado.")
-        return None
 
 
 def _resolve_executor() -> OrderExecutor | None:
