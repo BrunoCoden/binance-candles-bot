@@ -10,6 +10,7 @@ import os
 import subprocess
 import sys
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -53,6 +54,34 @@ class ServiceStatus:
     name: str
     active: bool
     detail: str | None = None
+
+
+@contextmanager
+def _single_instance_lock(path: str) -> Iterable[None]:
+    """
+    Evita ejecuciones concurrentes del heartbeat para no duplicar mensajes.
+
+    Se implementa con un lock no bloqueante sobre un archivo.
+    """
+    try:
+        import fcntl  # Linux-only
+    except Exception:  # pragma: no cover
+        yield
+        return
+
+    lock_path = path
+    fh = open(lock_path, "w", encoding="utf-8")
+    try:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        raise SystemExit("Heartbeat ya está corriendo (lock activo).")
+    try:
+        yield
+    finally:
+        try:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+        finally:
+            fh.close()
 
 
 def _parse_required_processes(value: str | None) -> list[str]:
@@ -166,7 +195,8 @@ def _resolve_timezone() -> ZoneInfo:
 
 def run_heartbeat(
     *,
-    required_processes: list[str],
+    required_processes: list[str] | None,
+    required_services: list[str] | None,
     interval_hours: float,
     once: bool,
 ) -> None:
@@ -174,7 +204,11 @@ def run_heartbeat(
     sleep_seconds = max(1.0, interval_hours * 3600.0)
 
     while True:
-        message = generate_heartbeat_message(required_processes, tz=tz)
+        if required_services:
+            message = generate_systemd_heartbeat_message(required_services, tz=tz)
+        else:
+            required = required_processes or []
+            message = generate_heartbeat_message(required, tz=tz)
         send_trade_notification(message)
         if once:
             break
@@ -213,22 +247,37 @@ def main() -> None:
         help="Lista de procesos a monitorear (separador ';' o ',').",
     )
     parser.add_argument(
+        "--services",
+        type=str,
+        default=os.getenv("HEARTBEAT_SERVICES"),
+        help="Lista de servicios systemd a monitorear (separador ';' o ',').",
+    )
+    parser.add_argument(
         "--once",
         action="store_true",
         help="Enviar solo una notificación y salir (útil para pruebas manuales).",
     )
+    parser.add_argument(
+        "--lock-file",
+        type=str,
+        default=os.getenv("HEARTBEAT_LOCK_FILE", "/tmp/stratbot_heartbeat.lock"),
+        help="Archivo de lock para evitar heartbeats duplicados.",
+    )
 
     args = parser.parse_args()
 
-    required_processes = required_processes_from_env(args.processes)
-    if not required_processes:
-        raise SystemExit("No se encontraron procesos a monitorear (revisá HEARTBEAT_PROCESSES).")
+    services = required_services_from_env(args.services) if args.services else []
+    processes = required_processes_from_env(args.processes) if args.processes else []
+    if not services and not processes:
+        raise SystemExit("No se encontraron servicios/procesos a monitorear (revisá HEARTBEAT_SERVICES/HEARTBEAT_PROCESSES).")
 
-    run_heartbeat(
-        required_processes=required_processes,
-        interval_hours=max(0.01, args.interval_hours),
-        once=args.once,
-    )
+    with _single_instance_lock(args.lock_file):
+        run_heartbeat(
+            required_processes=processes if not services else None,
+            required_services=services if services else None,
+            interval_hours=max(0.01, args.interval_hours),
+            once=args.once,
+        )
 
 
 if __name__ == "__main__":
