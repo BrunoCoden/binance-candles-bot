@@ -553,6 +553,11 @@
       try { extra = parseJsonSafe(exExtra.value); }
       catch (err) { showStatus(err.message, "error"); return; }
       if (!exSymbol.value.trim()) { showStatus("Par (símbolo) obligatorio", "error"); return; }
+      const isDydx = exName.value === "dydx";
+      if (isDydx) {
+        if (!exDydxOwner.value.trim()) { showStatus("dYdX owner_address es obligatorio", "error"); return; }
+        if (!exDydxSigner.value.trim()) { showStatus("dYdX signer_address es obligatorio", "error"); return; }
+      }
       const body = {
         exchange: exName.value,
         environment: exEnv.value,
@@ -566,6 +571,9 @@
         margin_mode: exMarginMode.value || null,
         leverage: exLeverage.value ? Number(exLeverage.value) : null,
         symbol: exSymbol.value.trim().toUpperCase(),
+        owner_address: isDydx ? (exDydxOwner.value.trim() || null) : null,
+        signer_address: isDydx ? (exDydxSigner.value.trim() || null) : null,
+        subaccount: isDydx ? (exDydxSubaccount.value ? Number(exDydxSubaccount.value) : null) : null,
         extra,
       };
       try {

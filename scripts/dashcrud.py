@@ -46,6 +46,7 @@ APPLY_SERVICES = [
     for s in os.getenv("DASHCRUD_APPLY_SERVICES", "bot-watcher.service").split(",")
     if s.strip()
 ]
+APPLY_MODE = os.getenv("DASHCRUD_APPLY_MODE", "noop").strip().lower()
 
 
 def _load_pending() -> dict:
@@ -527,17 +528,25 @@ class DashCRUDHandler(BaseHTTPRequestHandler):
         if not self._require_basic_auth():
             return
         if parts == ["api", "apply"]:
-            ok, err = _restart_services(APPLY_SERVICES)
+            # Modo "batch apply": por defecto no reinicia nada, solo limpia el pending.
+            # Esto evita depender de sudo/capabilities en el servicio web.
+            if APPLY_MODE in {"restart", "systemctl"}:
+                ok, err = _restart_services(APPLY_SERVICES)
+            else:
+                ok, err = True, None
             resp = self._snapshot()
             if ok:
                 _clear_pending()
                 resp["applied"] = True
-                resp["message"] = f"Servicios reiniciados: {', '.join(APPLY_SERVICES)}"
-                print(f"[DASHCRUD][APPLY] ok services={APPLY_SERVICES}", flush=True)
+                if APPLY_MODE in {"restart", "systemctl"}:
+                    resp["message"] = f"Servicios reiniciados: {', '.join(APPLY_SERVICES)}"
+                else:
+                    resp["message"] = "Cambios aplicados (sin reiniciar servicios)."
+                print(f"[DASHCRUD][APPLY] ok mode={APPLY_MODE} services={APPLY_SERVICES}", flush=True)
             else:
                 resp["applied"] = False
                 resp["error"] = f"No se pudieron reiniciar servicios: {err or 'unknown error'}"
-                print(f"[DASHCRUD][APPLY] error services={APPLY_SERVICES} err={err}", flush=True)
+                print(f"[DASHCRUD][APPLY] error mode={APPLY_MODE} services={APPLY_SERVICES} err={err}", flush=True)
             self._send_json(200 if ok else 500, resp)
             return
         if parts == ["api", "accounts"]:
