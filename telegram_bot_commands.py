@@ -3,6 +3,7 @@
 Bot sencillo que atiende comandos de Telegram relacionados con la estrategia.
 Actualmente soporta:
     /estavivo  -> devuelve el mismo estado que produce el heartbeat.
+    /dash      -> devuelve la URL del DashCRUD.
 """
 from __future__ import annotations
 
@@ -85,10 +86,16 @@ def _handle_command(
         _send_message(token, chat_id, report, reply_to=message_id)
         return
 
+    if command.startswith("/dash"):
+        url = os.getenv("DASHCRUD_PUBLIC_URL", "https://167.126.0.127")
+        _send_message(token, chat_id, url, reply_to=message_id)
+        return
+
     if command in {"/start", "/help"}:
         help_text = (
             "Comandos disponibles:\n"
             "• /estavivo — chequea los procesos críticos y devuelve el estado actual.\n"
+            "• /dash — devuelve la URL del DashCRUD.\n"
             "Los mensajes siguen el formato del heartbeat automático."
         )
         _send_message(token, chat_id, help_text, reply_to=message_id)
