@@ -4,17 +4,20 @@ Bot sencillo que atiende comandos de Telegram relacionados con la estrategia.
 Actualmente soporta:
     /estavivo  -> devuelve el mismo estado que produce el heartbeat.
     /dash      -> devuelve la URL del DashCRUD.
+    /usuarios  -> lista usuarios activos y sus exchanges.
 """
 from __future__ import annotations
 
 import os
 import time
+from pathlib import Path
 from typing import Iterable, Optional
 
 import requests
 from dotenv import load_dotenv
 
 from heartbeat_monitor import generate_systemd_heartbeat_message, required_services_from_env
+from trading.accounts.manager import AccountManager
 
 
 def _parse_chat_ids(chat_ids_env: str | None) -> list[str]:
@@ -91,11 +94,32 @@ def _handle_command(
         _send_message(token, chat_id, url, reply_to=message_id)
         return
 
+    if command.startswith("/usuarios"):
+        accounts_path = os.getenv("WATCHER_ACCOUNTS_FILE", "trading/accounts/oci_accounts.yaml")
+        try:
+            manager = AccountManager.from_file(Path(accounts_path))
+        except Exception as exc:
+            _send_message(token, chat_id, f"No pude leer cuentas ({accounts_path}): {exc}", reply_to=message_id)
+            return
+        lines = ["Usuarios activos:"]
+        for account in manager.list_accounts():
+            if not account.enabled:
+                continue
+            exchanges = sorted((account.exchanges or {}).keys())
+            if not exchanges:
+                continue
+            lines.append(f"- {account.user_id}: {', '.join(exchanges)}")
+        if len(lines) == 1:
+            lines.append("(ninguno)")
+        _send_message(token, chat_id, "\n".join(lines), reply_to=message_id)
+        return
+
     if command in {"/start", "/help"}:
         help_text = (
             "Comandos disponibles:\n"
             "• /estavivo — chequea los procesos críticos y devuelve el estado actual.\n"
             "• /dash — devuelve la URL del DashCRUD.\n"
+            "• /usuarios — lista usuarios activos y sus exchanges.\n"
             "Los mensajes siguen el formato del heartbeat automático."
         )
         _send_message(token, chat_id, help_text, reply_to=message_id)
