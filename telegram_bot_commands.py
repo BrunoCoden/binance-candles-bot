@@ -75,6 +75,29 @@ def _normalize_command(text: str) -> str:
         return ""
     return text.strip().lower()
 
+def _extract_command_and_arg(raw_text: str | None) -> tuple[str, str]:
+    if not raw_text:
+        return "", ""
+    text = raw_text.strip()
+    if not text.startswith("/"):
+        return "", ""
+    parts = text.split(maxsplit=1)
+    cmd = parts[0].strip().lower()
+    arg = parts[1].strip() if len(parts) == 2 else ""
+    return cmd, arg
+
+
+def _save_accounts_with_backup(manager: AccountManager, path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        ts = int(time.time())
+        backup = path.with_suffix(path.suffix + f".bak.{ts}")
+        try:
+            backup.write_bytes(path.read_bytes())
+        except Exception:
+            pass
+    manager.save_to_file(path)
+
 
 def _handle_command(
     *,
@@ -82,6 +105,7 @@ def _handle_command(
     chat_id: int,
     message_id: Optional[int],
     command: str,
+    arg: str,
     required_services: list[str],
 ) -> None:
     if command.startswith("/estavivo"):
@@ -101,17 +125,47 @@ def _handle_command(
         except Exception as exc:
             _send_message(token, chat_id, f"No pude leer cuentas ({accounts_path}): {exc}", reply_to=message_id)
             return
-        lines = ["Usuarios activos:"]
+        lines = ["Usuarios:"]
         for account in manager.list_accounts():
-            if not account.enabled:
-                continue
             exchanges = sorted((account.exchanges or {}).keys())
             if not exchanges:
                 continue
-            lines.append(f"- {account.user_id}: {', '.join(exchanges)}")
+            state = "ON" if account.enabled else "OFF"
+            lines.append(f"- {account.user_id} [{state}]: {', '.join(exchanges)}")
         if len(lines) == 1:
             lines.append("(ninguno)")
         _send_message(token, chat_id, "\n".join(lines), reply_to=message_id)
+        return
+
+    if command in {"/habilitar", "/deshabilitar"}:
+        user_id = arg.strip()
+        if not user_id:
+            _send_message(token, chat_id, f"Uso: {command} <user_id>", reply_to=message_id)
+            return
+        accounts_path = Path(os.getenv("WATCHER_ACCOUNTS_FILE", "trading/accounts/oci_accounts.yaml"))
+        try:
+            manager = AccountManager.from_file(accounts_path)
+            account = manager.get_account(user_id)
+        except Exception as exc:
+            _send_message(token, chat_id, f"No pude cargar '{user_id}' ({accounts_path}): {exc}", reply_to=message_id)
+            return
+
+        desired = command == "/habilitar"
+        if account.enabled == desired:
+            _send_message(token, chat_id, f"{user_id} ya está {'habilitado' if desired else 'deshabilitado'}.", reply_to=message_id)
+            return
+
+        account.enabled = desired
+        try:
+            _save_accounts_with_backup(manager, accounts_path)
+        except Exception as exc:
+            _send_message(token, chat_id, f"No pude guardar cambios en {accounts_path}: {exc}", reply_to=message_id)
+            return
+
+        note = ""
+        if not desired:
+            note = "\nSe intentará cerrar posiciones (según lógica del watcher) cuando recargue cuentas."
+        _send_message(token, chat_id, f"{user_id} {'habilitado' if desired else 'deshabilitado'} ✅{note}", reply_to=message_id)
         return
 
     if command in {"/start", "/help"}:
@@ -120,6 +174,8 @@ def _handle_command(
             "• /estavivo — chequea los procesos críticos y devuelve el estado actual.\n"
             "• /dash — devuelve la URL del DashCRUD.\n"
             "• /usuarios — lista usuarios activos y sus exchanges.\n"
+            "• /habilitar <user_id> — habilita el usuario.\n"
+            "• /deshabilitar <user_id> — deshabilita el usuario (y el watcher intentará cerrar posiciones).\n"
             "Los mensajes siguen el formato del heartbeat automático."
         )
         _send_message(token, chat_id, help_text, reply_to=message_id)
@@ -161,8 +217,8 @@ def main() -> None:
                 continue
 
             text = message.get("text")
-            command = _normalize_command(text)
-            if not command or not command.startswith("/"):
+            command, arg = _extract_command_and_arg(text)
+            if not command:
                 continue
 
             _handle_command(
@@ -170,6 +226,7 @@ def main() -> None:
                 chat_id=chat_id,
                 message_id=message.get("message_id"),
                 command=command,
+                arg=arg,
                 required_services=required_services,
             )
 
