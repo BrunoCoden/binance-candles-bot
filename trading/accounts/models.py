@@ -26,15 +26,53 @@ class ExchangeCredential:
     max_position_usdc: float | None = None
     margin_mode: str | None = None  # 'isolated' o 'cross' (dYdX soporta isolated markets)
 
+    def _env_candidates(self, key: str) -> list[str]:
+        """
+        Genera variantes de nombres de variables para tolerar:
+        - IDs con espacios (DashCRUD histórico): "DIEGO BYBIT_..." -> "DIEGO_BYBIT_..."
+        - Convención LIVE_API_KEY vs API_KEY_LIVE
+        """
+        key = (key or "").strip()
+        if not key:
+            return []
+
+        candidates: list[str] = []
+
+        def add(v: str) -> None:
+            if v and v not in candidates:
+                candidates.append(v)
+
+        add(key)
+        add(key.replace(" ", "_"))
+
+        swapped = key
+        swapped = swapped.replace("_API_KEY_LIVE", "_LIVE_API_KEY").replace("_LIVE_API_KEY", "_API_KEY_LIVE")
+        swapped = swapped.replace("_API_SECRET_LIVE", "_LIVE_API_SECRET").replace("_LIVE_API_SECRET", "_API_SECRET_LIVE")
+        swapped = swapped.replace("_API_KEY_TESTNET", "_TESTNET_API_KEY").replace("_TESTNET_API_KEY", "_API_KEY_TESTNET")
+        swapped = swapped.replace("_API_SECRET_TESTNET", "_TESTNET_API_SECRET").replace("_TESTNET_API_SECRET", "_API_SECRET_TESTNET")
+        add(swapped)
+        add(swapped.replace(" ", "_"))
+
+        # normaliza dobles underscores por si venía con espacios/concat raras
+        for v in list(candidates):
+            add(v.replace("__", "_"))
+
+        return candidates
+
+    def _resolve_env_value(self, env: Mapping[str, str], key: str) -> str | None:
+        for cand in self._env_candidates(key):
+            val = env.get(cand)
+            if val is None:
+                continue
+            # también consideramos inválido el caso "VAR=VAR" (placeholder accidental)
+            if val.strip() and val.strip() != cand:
+                return val
+        return None
+
     def resolve_keys(self, env: Mapping[str, str]) -> tuple[str, str]:
-        api_key = env.get(self.api_key_env)
-        api_secret = env.get(self.api_secret_env)
-        if (
-            not api_key
-            or not api_secret
-            or api_key.strip() == self.api_key_env
-            or api_secret.strip() == self.api_secret_env
-        ):
+        api_key = self._resolve_env_value(env, self.api_key_env)
+        api_secret = self._resolve_env_value(env, self.api_secret_env)
+        if not api_key or not api_secret:
             raise RuntimeError(
                 f"Credenciales faltantes para {self.exchange}: "
                 f"{self.api_key_env}/{self.api_secret_env}"
