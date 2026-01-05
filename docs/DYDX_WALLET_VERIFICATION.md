@@ -74,3 +74,4 @@ Si la private key no corresponde a la wallet address:
 El código de migración está funcionando correctamente. El problema es con la configuración de la wallet en dYdX, no con el código.
 
 
+

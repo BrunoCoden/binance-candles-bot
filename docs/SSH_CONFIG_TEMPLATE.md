@@ -36,3 +36,4 @@ ssh -i ~/.ssh/ssh-key-2025-11-07.key ubuntu@TU_IP_O_HOSTNAME
 
 
 
+

@@ -30,6 +30,8 @@ _thresholds: list[dict] = []
 THRESHOLDS_PATH = Path("backtest/backtestTR/pending_thresholds.json")
 LOSS_PCT = 0.05  # 5% en contra
 GAIN_PCT = 0.09  # 9% a favor
+THRESHOLDS_CLEAR_ON_STARTUP = os.getenv("WATCHER_THRESHOLDS_CLEAR_ON_STARTUP", "false").lower() == "true"
+THRESHOLDS_REBUILD_ON_STARTUP = os.getenv("WATCHER_THRESHOLDS_REBUILD_ON_STARTUP", "false").lower() == "true"
 ACCOUNTS_AUTO_RELOAD = os.getenv("WATCHER_ACCOUNTS_AUTO_RELOAD", "false").lower() == "true"
 DISABLED_ACCOUNTS_AUTO_CLOSE = os.getenv("WATCHER_DISABLED_AUTO_CLOSE", "true").lower() == "true"
 DISABLED_ACCOUNTS_CLOSE_POLL_SECONDS = float(os.getenv("WATCHER_DISABLED_CLOSE_POLL_SECONDS", "30"))
@@ -198,6 +200,16 @@ def _save_thresholds():
 
 _load_thresholds()
 
+def _clear_thresholds_file() -> None:
+    global _thresholds
+    _thresholds = []
+    try:
+        if THRESHOLDS_PATH.exists():
+            THRESHOLDS_PATH.unlink()
+        print(f"[WATCHER][THRESHOLDS] Limpiado archivo de umbrales: {THRESHOLDS_PATH}")
+    except Exception as exc:
+        print(f"[WATCHER][WARN] No se pudo limpiar archivo de umbrales {THRESHOLDS_PATH}: {exc}")
+
 
 def _resolve_targets() -> list[tuple[str, str]]:
     """
@@ -325,7 +337,147 @@ def _register_threshold(user_id: str, exchange: str, symbol: str, direction: str
             "fired_gain": False,
         }
     )
+    print(
+        f"[WATCHER][THRESHOLDS][REGISTER] user={user_id} ex={exchange} symbol={symbol} dir={direction} "
+        f"entry={entry_price:.6f} loss={loss_price:.6f} gain={gain_price:.6f}"
+    )
     _save_thresholds()
+
+
+def _binance_position_details(cred: ExchangeCredential, symbol: str) -> tuple[float, float | None]:
+    """
+    Devuelve (position_amt_signed, entry_price) para Binance Futures.
+    """
+    try:
+        api_key, api_secret = cred.resolve_keys(os.environ)
+        base_url = "https://testnet.binancefuture.com" if cred.environment == ExchangeEnvironment.TESTNET else None
+        client = UMFutures(key=api_key, secret=api_secret, base_url=base_url) if base_url else UMFutures(
+            key=api_key, secret=api_secret
+        )
+        pos = client.get_position_risk(symbol=symbol)
+        if not pos:
+            return 0.0, None
+        row = pos[0] or {}
+        amt = float(row.get("positionAmt") or 0.0)
+        entry = row.get("entryPrice")
+        try:
+            entry_price = float(entry) if entry is not None else None
+        except Exception:
+            entry_price = None
+        if entry_price is not None and entry_price <= 0:
+            entry_price = None
+        return amt, entry_price
+    except Exception:
+        return 0.0, None
+
+
+def _bybit_position_details(cred: ExchangeCredential, symbol: str) -> tuple[float, float | None]:
+    """
+    Devuelve (position_amt_signed, entry_price) para Bybit linear.
+    """
+    try:
+        from pybit.unified_trading import HTTP  # type: ignore
+
+        api_key, api_secret = cred.resolve_keys(os.environ)
+        is_testnet = cred.environment != ExchangeEnvironment.LIVE
+        domain_env = os.getenv("BYBIT_DOMAIN_TESTNET" if is_testnet else "BYBIT_DOMAIN")
+        client = (
+            HTTP(api_key=api_key, api_secret=api_secret, testnet=False, domain=domain_env)
+            if domain_env
+            else HTTP(api_key=api_key, api_secret=api_secret, testnet=is_testnet)
+        )
+        raw = client.get_positions(category="linear", symbol=symbol)
+        items = raw.get("result", {}).get("list") or []
+        if not items:
+            return 0.0, None
+        pos = items[0] or {}
+        size = float(pos.get("size") or 0.0)
+        side = str(pos.get("side") or "").lower()
+        if size == 0:
+            return 0.0, None
+        signed_amt = size if side == "buy" else -size
+        entry_price = None
+        for k in ("avgPrice", "entryPrice", "avgEntryPrice"):
+            v = pos.get(k)
+            if v is None:
+                continue
+            try:
+                fv = float(v)
+                if fv > 0:
+                    entry_price = fv
+                    break
+            except Exception:
+                continue
+        return signed_amt, entry_price
+    except Exception:
+        return 0.0, None
+
+
+def _dydx_position_details(cred: ExchangeCredential, symbol: str) -> tuple[float, float | None]:
+    """
+    Devuelve (position_amt_signed, entry_price) para dYdX v4 via indexer.
+    """
+    try:
+        from trading.exchanges.dydx import get_dydx_position_details
+
+        api_key, _ = cred.resolve_keys(os.environ)
+        owner_address = (cred.extra or {}).get("owner_address") or api_key
+        subaccount_number = (cred.extra or {}).get("subaccount", 0) or 0
+        market_symbol = (cred.extra or {}).get("symbol") or symbol
+        return get_dydx_position_details(owner_address, market_symbol, int(subaccount_number))
+    except Exception:
+        return 0.0, None
+
+
+def _rebuild_thresholds_from_open_positions() -> None:
+    """
+    Recalcula umbrales (-5%/+9%) en base a las posiciones abiertas actuales.
+    - Requiere acceso a exchanges (no dry-run).
+    - Si no se puede obtener entry_price, omite ese par y deja log.
+    """
+    if not TRADING_ENABLED:
+        print("[WATCHER][THRESHOLDS][REBUILD] Trading deshabilitado; no se reconstruyen umbrales.")
+        return
+    manager = _load_manager()
+    if manager is None:
+        print("[WATCHER][THRESHOLDS][REBUILD] No hay AccountManager; no se reconstruyen umbrales.")
+        return
+
+    rebuilt = 0
+    skipped = 0
+
+    for account in manager.list_accounts():
+        if not account.enabled:
+            continue
+        for exchange, cred in (account.exchanges or {}).items():
+            symbol = (cred.extra or {}).get("symbol") or SYMBOL_DISPLAY.replace(".P", "")
+            pos_amt = 0.0
+            entry_price = None
+            ex_l = exchange.lower()
+            if ex_l == "binance":
+                pos_amt, entry_price = _binance_position_details(cred, symbol)
+            elif ex_l == "bybit":
+                pos_amt, entry_price = _bybit_position_details(cred, symbol)
+            elif ex_l == "dydx":
+                pos_amt, entry_price = _dydx_position_details(cred, symbol)
+            else:
+                continue
+
+            if not pos_amt:
+                continue
+            if entry_price is None or entry_price <= 0:
+                print(
+                    f"[WATCHER][THRESHOLDS][REBUILD][SKIP] user={account.user_id} ex={exchange} symbol={symbol} "
+                    f"pos_amt={pos_amt} reason=no_entry_price"
+                )
+                skipped += 1
+                continue
+
+            direction = "long" if pos_amt > 0 else "short"
+            _register_threshold(account.user_id, exchange, symbol, direction, float(entry_price))
+            rebuilt += 1
+
+    print(f"[WATCHER][THRESHOLDS][REBUILD] done rebuilt={rebuilt} skipped={skipped}")
 
 
 def _current_position(user_id: str, exchange: str, symbol: str) -> float:
@@ -436,6 +588,10 @@ def _evaluate_thresholds(current_price: float, ts) -> list[dict]:
         # Si ya no hay posición, limpiar registro
         pos_amt = _current_position(user_id, exchange, symbol)
         if pos_amt == 0:
+            print(
+                f"[WATCHER][THRESHOLDS][CLEAN] user={user_id} ex={exchange} symbol={symbol} "
+                f"reason=no_position"
+            )
             updated = True
             continue
 
@@ -451,7 +607,14 @@ def _evaluate_thresholds(current_price: float, ts) -> list[dict]:
         if hit_loss or hit_gain:
             kind = "ganancia +9%" if hit_gain else "pérdida -5%"
             # Ejecuta cierre reduceOnly MARKET del tamaño actual
-            _close_position(user_id, exchange, symbol, direction)
+            print(
+                f"[WATCHER][THRESHOLDS][TRIGGER] user={user_id} ex={exchange} symbol={symbol} dir={direction} "
+                f"last={current_price:.6f} entry={entry:.6f} loss={loss_price:.6f} gain={gain_price:.6f} kind={kind}"
+            )
+            close_ok = _close_position(user_id, exchange, symbol, direction)
+            print(
+                f"[WATCHER][THRESHOLDS][CLOSE] user={user_id} ex={exchange} symbol={symbol} ok={close_ok} kind={kind}"
+            )
             alerts.append(
                 {
                     "type": "auto_close",
@@ -751,6 +914,13 @@ def main():
     _notify_startup()
     last_threshold_check = 0.0
     last_disabled_check = 0.0
+    if THRESHOLDS_CLEAR_ON_STARTUP:
+        _clear_thresholds_file()
+    if THRESHOLDS_REBUILD_ON_STARTUP:
+        try:
+            _rebuild_thresholds_from_open_positions()
+        except Exception as exc:
+            print(f"[WATCHER][WARN] Reconstrucción de umbrales falló: {exc}")
     # Al iniciar, si hay cuentas disabled, intenta cerrar posiciones abiertas.
     try:
         _close_disabled_accounts_positions()

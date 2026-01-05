@@ -76,6 +76,59 @@ def get_dydx_position(wallet_address: str, market_symbol: str, subaccount_number
         return 0.0
 
 
+def get_dydx_position_details(
+    wallet_address: str,
+    market_symbol: str,
+    subaccount_number: int = 0,
+) -> tuple[float, float | None]:
+    """
+    Variante de get_dydx_position que además intenta obtener el precio de entrada/promedio.
+
+    Returns:
+        (size_signed, entry_price_or_none)
+    """
+    try:
+        url = f"{INDEXER_BASE}/addresses/{wallet_address}/subaccountNumber/{subaccount_number}/perpetualPositions"
+        r = requests.get(url, timeout=10)
+        if r.status_code == 404:
+            return 0.0, None
+        r.raise_for_status()
+        data = r.json()
+
+        positions = data.get("positions") or []
+        market_symbol_upper = market_symbol.upper()
+
+        for pos in positions:
+            if pos.get("market") != market_symbol_upper:
+                continue
+            size = float(pos.get("size", "0") or "0")
+            entry_price: float | None = None
+            for k in (
+                "entryPrice",
+                "avgEntryPrice",
+                "averageEntryPrice",
+                "averageOpenPrice",
+                "openPrice",
+                "avgOpenPrice",
+            ):
+                v = pos.get(k)
+                if v is None:
+                    continue
+                try:
+                    fv = float(v)
+                    if fv > 0:
+                        entry_price = fv
+                        break
+                except Exception:
+                    continue
+            return size, entry_price
+
+        return 0.0, None
+    except Exception as exc:
+        logger.error("Error consultando posición+entrada dYdX para %s en %s: %s", wallet_address, market_symbol, exc)
+        return 0.0, None
+
+
 def close_dydx_position_via_order_executor(
     account: AccountConfig,
     credential: ExchangeCredential,
