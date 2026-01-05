@@ -204,9 +204,9 @@ def _clear_thresholds_file() -> None:
     global _thresholds
     _thresholds = []
     try:
-        if THRESHOLDS_PATH.exists():
-            THRESHOLDS_PATH.unlink()
-        print(f"[WATCHER][THRESHOLDS] Limpiado archivo de umbrales: {THRESHOLDS_PATH}")
+        THRESHOLDS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _save_thresholds()
+        print(f"[WATCHER][THRESHOLDS] Limpiado archivo de umbrales ([]) en: {THRESHOLDS_PATH}")
     except Exception as exc:
         print(f"[WATCHER][WARN] No se pudo limpiar archivo de umbrales {THRESHOLDS_PATH}: {exc}")
 
@@ -445,25 +445,38 @@ def _rebuild_thresholds_from_open_positions() -> None:
 
     rebuilt = 0
     skipped = 0
+    scanned = 0
 
     for account in manager.list_accounts():
         if not account.enabled:
             continue
         for exchange, cred in (account.exchanges or {}).items():
+            scanned += 1
             symbol = (cred.extra or {}).get("symbol") or SYMBOL_DISPLAY.replace(".P", "")
             pos_amt = 0.0
             entry_price = None
             ex_l = exchange.lower()
-            if ex_l == "binance":
-                pos_amt, entry_price = _binance_position_details(cred, symbol)
-            elif ex_l == "bybit":
-                pos_amt, entry_price = _bybit_position_details(cred, symbol)
-            elif ex_l == "dydx":
-                pos_amt, entry_price = _dydx_position_details(cred, symbol)
-            else:
+            try:
+                if ex_l == "binance":
+                    pos_amt, entry_price = _binance_position_details(cred, symbol)
+                elif ex_l == "bybit":
+                    pos_amt, entry_price = _bybit_position_details(cred, symbol)
+                elif ex_l == "dydx":
+                    pos_amt, entry_price = _dydx_position_details(cred, symbol)
+                else:
+                    continue
+            except Exception as exc:
+                print(
+                    f"[WATCHER][THRESHOLDS][REBUILD][ERR] user={account.user_id} ex={exchange} symbol={symbol} "
+                    f"err={exc}"
+                )
+                skipped += 1
                 continue
 
             if not pos_amt:
+                print(
+                    f"[WATCHER][THRESHOLDS][REBUILD][NO_POS] user={account.user_id} ex={exchange} symbol={symbol}"
+                )
                 continue
             if entry_price is None or entry_price <= 0:
                 print(
@@ -477,7 +490,7 @@ def _rebuild_thresholds_from_open_positions() -> None:
             _register_threshold(account.user_id, exchange, symbol, direction, float(entry_price))
             rebuilt += 1
 
-    print(f"[WATCHER][THRESHOLDS][REBUILD] done rebuilt={rebuilt} skipped={skipped}")
+    print(f"[WATCHER][THRESHOLDS][REBUILD] done scanned={scanned} rebuilt={rebuilt} skipped={skipped}")
 
 
 def _current_position(user_id: str, exchange: str, symbol: str) -> float:
