@@ -558,6 +558,103 @@ def _close_position(user_id: str, exchange: str, symbol: str, direction: str) ->
                 quantity=f"{qty:.3f}",
                 reduceOnly="true",
             )
+        elif exchange.lower() == "bybit":
+            from decimal import Decimal, ROUND_DOWN, ROUND_UP
+            import re
+            from pybit.unified_trading import HTTP  # type: ignore
+
+            api_key, api_secret = cred.resolve_keys(os.environ)
+            is_testnet = cred.environment != ExchangeEnvironment.LIVE
+            domain_env = os.getenv("BYBIT_DOMAIN_TESTNET" if is_testnet else "BYBIT_DOMAIN")
+            client = (
+                HTTP(api_key=api_key, api_secret=api_secret, testnet=False, domain=domain_env)
+                if domain_env
+                else HTTP(api_key=api_key, api_secret=api_secret, testnet=is_testnet)
+            )
+
+            # Cierre reduceOnly: lado opuesto a la posición actual.
+            side = "Sell" if pos_amt > 0 else "Buy"
+
+            def _quantize(v: float, step: str) -> str:
+                dv = Decimal(str(v)).quantize(Decimal(step), rounding=ROUND_DOWN)
+                if dv <= 0:
+                    dv = Decimal(step)
+                return format(dv, "f")
+
+            def _ceil_to_step(value: float, step: str) -> str:
+                dv = Decimal(str(value))
+                ds = Decimal(step)
+                if ds <= 0:
+                    return format(dv, "f")
+                q = (dv / ds).to_integral_value(rounding=ROUND_UP)
+                out = q * ds
+                if out <= 0:
+                    out = ds
+                return format(out, "f")
+
+            def _autocorrect_qty(symbol_: str, qty_s: str) -> str | None:
+                try:
+                    raw = client.get_instruments_info(category="linear", symbol=str(symbol_).upper())
+                    items = raw.get("result", {}).get("list") or []
+                    first = items[0] if items else {}
+                    lot = first.get("lotSizeFilter") or {}
+                    min_qty_s = str(lot.get("minOrderQty") or "")
+                    step_s = str(lot.get("qtyStep") or "")
+                    if not min_qty_s or not step_s:
+                        return None
+                    current = float(qty_s)
+                    min_qty = float(min_qty_s)
+                    target = max(current, min_qty)
+                    return _ceil_to_step(target, step_s)
+                except Exception:
+                    return None
+
+            qty_s = _quantize(qty, "0.001")
+            params = {
+                "category": "linear",
+                "symbol": symbol,
+                "side": side,
+                "orderType": "Market",
+                "qty": qty_s,
+                "reduceOnly": True,
+            }
+            try:
+                raw = client.place_order(**params)
+            except Exception as exc:
+                # Si Bybit rechaza qty/precision, corregir y reintentar una vez.
+                msg = str(exc)
+                err_code = None
+                m = re.search(r"ErrCode:\\s*(\\d+)", msg)
+                if m:
+                    try:
+                        err_code = int(m.group(1))
+                    except Exception:
+                        err_code = None
+                looks_like_qty_error = (
+                    (err_code == 10001)
+                    or ("minimum limit" in msg.lower())
+                    or ("qty" in msg.lower() and "invalid" in msg.lower())
+                    or ("precision" in msg.lower())
+                )
+                if looks_like_qty_error:
+                    corrected = _autocorrect_qty(symbol, qty_s)
+                    if corrected and corrected != qty_s:
+                        print(
+                            f"[WATCHER][WARN] Bybit rechazó qty en cierre; reintentando symbol={symbol} "
+                            f"qty={qty_s} -> {corrected} err={msg}"
+                        )
+                        params2 = {**params, "qty": corrected}
+                        raw = client.place_order(**params2)
+                        params = params2
+                    else:
+                        raise
+                else:
+                    raise
+
+            ret_code = raw.get("retCode")
+            if ret_code not in (None, 0, "0"):
+                msg = raw.get("retMsg") or "BYBIT_ERROR"
+                raise RuntimeError(f"Bybit retCode={ret_code} retMsg={msg}")
         elif exchange.lower() == "dydx":
             # Usa OrderExecutor con wallet address + private key (formato v4 nativo)
             from trading.exchanges.dydx import close_dydx_position_via_order_executor
@@ -572,7 +669,7 @@ def _close_position(user_id: str, exchange: str, symbol: str, direction: str) ->
         print(f"[WATCHER][INFO] Cierre reduceOnly MARKET user={user_id} ex={exchange} symbol={symbol} qty={qty} side={side}")
         return True
     except Exception as exc:
-        print(f"[WATCHER][WARN] No se pudo cerrar posición user={user_id} ex={exchange}: {exc}")
+        print(f"[WATCHER][WARN] No se pudo cerrar posición user={user_id} ex={exchange} symbol={symbol}: {exc}")
         return False
 
 
