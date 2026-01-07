@@ -6,8 +6,8 @@ users:
   exchanges:
     binance:
       exchange: binance
-      api_key_env: BRUNO_BINANCE_LIVE_API_KEY
-      api_secret_env: BRUNO_BINANCE_LIVE_API_SECRET
+      api_key_env: BRUNO_BINANCE_API_KEY_LIVE
+      api_secret_env: BRUNO_BINANCE_API_SECRET_LIVE
       environment: live
       notional_usdt: 20.0
       leverage: 5
@@ -25,8 +25,8 @@ users:
   exchanges:
     binance:
       exchange: binance
-      api_key_env: DIEGO_BINANCE_LIVE_API_KEY
-      api_secret_env: DIEGO_BINANCE_LIVE_API_SECRET
+      api_key_env: DIEGO_BINANCE_API_KEY_LIVE
+      api_secret_env: DIEGO_BINANCE_API_SECRET_LIVE
       environment: live
       notional_usdt: 10000.0
       leverage: null
@@ -39,7 +39,7 @@ users:
       margin_mode: null
 - id: bruno ByBIt
   label: bruno Bybit
-  enabled: false
+  enabled: true
   metadata: {}
   exchanges:
     bybit:
@@ -64,8 +64,8 @@ users:
   exchanges:
     bybit:
       exchange: bybit
-      api_key_env: DIEGO_BYBIT_BYBIT_LIVE_API_KEY
-      api_secret_env: DIEGO_BYBIT_BYBIT_LIVE_API_SECRET
+      api_key_env: DIEGO_BYBIT_API_KEY_LIVE
+      api_secret_env: DIEGO_BYBIT_API_SECRET_LIVE
       environment: live
       notional_usdt: 5000.0
       leverage: 5

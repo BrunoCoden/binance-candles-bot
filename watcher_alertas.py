@@ -499,6 +499,9 @@ def _current_position(user_id: str, exchange: str, symbol: str) -> float:
     Implementado para binance/dydx/bybit; si falla devuelve 0.
     """
     try:
+        # En dry-run no consultamos exchanges (evita requests reales en simulaciones).
+        if TRADING_DRY_RUN:
+            return 0.0
         if _account_manager is None:
             return 0.0
         account = _account_manager.get_account(user_id)

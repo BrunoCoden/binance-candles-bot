@@ -10,7 +10,7 @@ users:
       api_secret_env: BRUNO_BINANCE_LIVE_API_SECRET
       environment: live
       notional_usdt: 20.0
-      leverage: 5
+      leverage: null
       extra:
         symbol: ETHUSDT
       passphrase_env: null
@@ -25,18 +25,52 @@ users:
   exchanges:
     binance:
       exchange: binance
-      api_key_env: DIEGO_BINANCE_LIVE_API_KEY
-      api_secret_env: DIEGO_BINANCE_LIVE_API_SECRET
+      api_key_env: DIEGO_BINANCE_API_KEY_LIVE
+      api_secret_env: DIEGO_BINANCE_API_SECRET_LIVE
       environment: live
-      notional_usdt: 10000.0
-      leverage: null
+      notional_usdt: 100.0
+      leverage: 5
       extra:
-        symbol: ETHUSDT
+        exchange: binance
+        extra: {}
       passphrase_env: null
       stark_key_env: null
       notional_usdc: null
       max_position_usdc: null
       margin_mode: null
+    dydx:
+      exchange: dydx
+      api_key_env: DIEGO_DYDX_API_KEY_LIVE
+      api_secret_env: DIEGO_DYDX_API_SECRET_LIVE
+      environment: live
+      notional_usdt: null
+      leverage: null
+      extra:
+        exchange: dydx
+        extra:
+          symbol: ETH-USD
+          subaccount: 0
+      passphrase_env: null
+      stark_key_env: null
+      notional_usdc: 50.0
+      max_position_usdc: 400.0
+      margin_mode: isolated
+    bybit:
+      exchange: bybit
+      api_key_env: DIEGO_BYBIT_API_KEY_LIVE
+      api_secret_env: DIEGO_BYBIT_API_SECRET_LIVE
+      environment: live
+      notional_usdt: 100.0
+      leverage: 5
+      extra:
+        exchange: bybit
+        extra:
+          symbol: ETHUSDT
+      passphrase_env: null
+      stark_key_env: null
+      notional_usdc: null
+      max_position_usdc: 200.0
+      margin_mode: isolated
 - id: bruno ByBIt
   label: bruno Bybit
   enabled: false
@@ -44,14 +78,13 @@ users:
   exchanges:
     bybit:
       exchange: bybit
-      api_key_env: BRUNO_BYBIT_API_KEY_TESTNET
-      api_secret_env: BRUNO_BYBIT_API_SECRET_TESTNET
+      api_key_env: BRUNO BYBIT_BYBIT_TESTNET_API_KEY
+      api_secret_env: BRUNO BYBIT_BYBIT_TESTNET_API_SECRET
       environment: testnet
       notional_usdt: 20.0
-      leverage: 5
+      leverage: null
       extra:
         symbol: ETHUSDT
-        exchange: bybit
       passphrase_env: null
       stark_key_env: null
       notional_usdc: null
@@ -64,36 +97,13 @@ users:
   exchanges:
     bybit:
       exchange: bybit
-      api_key_env: DIEGO_BYBIT_BYBIT_LIVE_API_KEY
-      api_secret_env: DIEGO_BYBIT_BYBIT_LIVE_API_SECRET
+      api_key_env: DIEGO BYBIT_BYBIT_LIVE_API_KEY
+      api_secret_env: DIEGO BYBIT_BYBIT_LIVE_API_SECRET
       environment: live
-      notional_usdt: 5000.0
+      notional_usdt: 25.0
       leverage: 5
       extra:
         symbol: ETHUSDT
-      passphrase_env: null
-      stark_key_env: null
-      notional_usdc: null
-      max_position_usdc: null
-      margin_mode: null
-- id: diego Dydx
-  label: Cuenta Diego(Live) DyDx
-  enabled: true
-  metadata: {}
-  exchanges:
-    dydx:
-      exchange: dydx
-      api_key_env: DIEGO_DYDX_DYDX_LIVE_API_KEY
-      api_secret_env: DIEGO_DYDX_DYDX_LIVE_API_SECRET
-      environment: live
-      notional_usdt: 20.0
-      leverage: 5
-      extra:
-        symbol: ETH-USD
-        subaccount: 0
-        exchange: dydx
-        owner_address: dydx1whkj5d959clyjvr0ctmge6wzche82895302k3n
-        signer_address: dydx1y6tse444g5nuswc6f83ymrpv6aqpl6zu8dlfgh
       passphrase_env: null
       stark_key_env: null
       notional_usdc: null

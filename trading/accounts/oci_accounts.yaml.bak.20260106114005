@@ -39,7 +39,7 @@ users:
       margin_mode: null
 - id: bruno ByBIt
   label: bruno Bybit
-  enabled: false
+  enabled: true
   metadata: {}
   exchanges:
     bybit:
