@@ -413,22 +413,6 @@ def _bybit_position_details(cred: ExchangeCredential, symbol: str) -> tuple[floa
         return 0.0, None
 
 
-def _dydx_position_details(cred: ExchangeCredential, symbol: str) -> tuple[float, float | None]:
-    """
-    Devuelve (position_amt_signed, entry_price) para dYdX v4 via indexer.
-    """
-    try:
-        from trading.exchanges.dydx import get_dydx_position_details
-
-        api_key, _ = cred.resolve_keys(os.environ)
-        owner_address = (cred.extra or {}).get("owner_address") or api_key
-        subaccount_number = (cred.extra or {}).get("subaccount", 0) or 0
-        market_symbol = (cred.extra or {}).get("symbol") or symbol
-        return get_dydx_position_details(owner_address, market_symbol, int(subaccount_number))
-    except Exception:
-        return 0.0, None
-
-
 def _rebuild_thresholds_from_open_positions() -> None:
     """
     Recalcula umbrales (-5%/+9%) en base a las posiciones abiertas actuales.
@@ -461,8 +445,6 @@ def _rebuild_thresholds_from_open_positions() -> None:
                     pos_amt, entry_price = _binance_position_details(cred, symbol)
                 elif ex_l == "bybit":
                     pos_amt, entry_price = _bybit_position_details(cred, symbol)
-                elif ex_l == "dydx":
-                    pos_amt, entry_price = _dydx_position_details(cred, symbol)
                 else:
                     continue
             except Exception as exc:
@@ -496,7 +478,7 @@ def _rebuild_thresholds_from_open_positions() -> None:
 def _current_position(user_id: str, exchange: str, symbol: str) -> float:
     """
     Devuelve cantidad firmada de la posición actual (long >0, short <0).
-    Implementado para binance/dydx/bybit; si falla devuelve 0.
+    Implementado para binance/bybit; si falla devuelve 0.
     """
     try:
         # En dry-run no consultamos exchanges (evita requests reales en simulaciones).
@@ -516,16 +498,6 @@ def _current_position(user_id: str, exchange: str, symbol: str) -> float:
             if not pos:
                 return 0.0
             return float(pos[0].get("positionAmt") or 0.0)
-        elif exchange.lower() == "dydx":
-            # Usa wallet address + private key (formato v4 nativo)
-            from trading.exchanges.dydx import get_dydx_position
-            
-            api_key, _ = cred.resolve_keys(os.environ)
-            owner_address = (cred.extra or {}).get("owner_address") or api_key
-            subaccount_number = cred.extra.get("subaccount", 0) if cred.extra else 0
-            market_symbol = cred.extra.get("symbol", symbol) if cred.extra else symbol
-            
-            return get_dydx_position(owner_address, market_symbol, subaccount_number)
         elif exchange.lower() == "bybit":
             return _bybit_position_amount(cred, symbol)
         return 0.0
@@ -663,15 +635,6 @@ def _close_position(user_id: str, exchange: str, symbol: str, direction: str) ->
             if ret_code not in (None, 0, "0"):
                 msg = raw.get("retMsg") or "BYBIT_ERROR"
                 raise RuntimeError(f"Bybit retCode={ret_code} retMsg={msg}")
-        elif exchange.lower() == "dydx":
-            # Usa OrderExecutor con wallet address + private key (formato v4 nativo)
-            from trading.exchanges.dydx import close_dydx_position_via_order_executor
-            
-            market_symbol = cred.extra.get("symbol", symbol) if cred.extra else symbol
-            success = close_dydx_position_via_order_executor(account, cred, market_symbol, pos_amt)
-            if not success:
-                return False
-            side = "BUY" if pos_amt < 0 else "SELL"
         else:
             return False
         print(f"[WATCHER][INFO] Cierre reduceOnly MARKET user={user_id} ex={exchange} symbol={symbol} qty={qty} side={side}")
@@ -854,15 +817,6 @@ def _close_opposite_position(user_id: str, exchange: str, direction: str, symbol
                 quantity=f"{qty:.3f}",
                 reduceOnly="true",
             )
-        elif exchange.lower() == "dydx":
-            # Usa OrderExecutor con wallet address + private key (formato v4 nativo)
-            from trading.exchanges.dydx import close_dydx_position_via_order_executor
-            
-            market_symbol = cred.extra.get("symbol", symbol) if cred.extra else symbol
-            # pos_amt ya tiene el signo correcto (positivo long, negativo short)
-            success = close_dydx_position_via_order_executor(account, cred, market_symbol, pos_amt)
-            if not success:
-                return False
         print(
             f"[WATCHER][INFO] Cierre reduceOnly (MARKET) de posición opuesta qty={qty} side={side} en {symbol} ex={exchange}"
         )
@@ -901,10 +855,7 @@ def _submit_trade(event: dict) -> None:
             cred = account.get_exchange(exchange) if account else None
             notional = None
             if cred:
-                if exchange.lower() == "dydx":
-                    notional = cred.notional_usdc if cred.notional_usdc is not None else cred.notional_usdt
-                else:
-                    notional = cred.notional_usdt
+                notional = cred.notional_usdt
         except Exception:
             notional = None
         try:
@@ -937,26 +888,11 @@ def _submit_trade(event: dict) -> None:
             print(f"[WATCHER][INFO] Ya hay posición {direction} abierta en {symbol}; se omite señal.")
             continue
 
-        # Chequeo de tope de posición si se configuró
-        try:
-            if cred and cred.max_position_usdc and price:
-                pos_amt = _current_position(user_id, exchange, symbol)
-                current_notional = abs(pos_amt) * price
-                next_notional = quantity * price
-                if current_notional + next_notional > cred.max_position_usdc:
-                    print(
-                        f"[WATCHER][INFO] Tope de posición excedido ({current_notional + next_notional:.2f} > {cred.max_position_usdc}); se omite señal."
-                    )
-                    continue
-        except Exception:
-            pass
-
         extra = {
             "source_event": event.get("type", "unknown"),
             "event_timestamp": str(event.get("timestamp")),
             "account": user_id,
             "exchange": exchange,
-            "margin_mode": getattr(cred, "margin_mode", None) if cred else None,
         }
         order = OrderRequest(
             symbol=symbol,

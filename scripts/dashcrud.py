@@ -160,7 +160,7 @@ def _validate_symbol(exchange: str, environment: ExchangeEnvironment, symbol: st
     """
     Valida el símbolo contra el exchange.
     - Binance: consulta exchangeInfo.
-    - dYdX, Bybit: se acepta sin validar contra la API (asumimos símbolo válido), con fallback si se configuró.
+    - Bybit: se acepta sin validar contra la API (asumimos símbolo válido), con fallback si se configuró.
     - Otros: usa fallback si está configurado.
     """
     ex = exchange.lower()
@@ -183,28 +183,11 @@ def _validate_symbol(exchange: str, environment: ExchangeEnvironment, symbol: st
             if sym in FALLBACK_SYMBOLS.get(ex, set()):
                 return
             raise ValueError(f"No se pudo validar el símbolo en {exchange}: {exc}")
-    if ex == "dydx":
-        # dYdX v4 usa markets tipo ETH-USD, BTC-USD, etc.
-        if re.match(r"^[A-Z0-9]+-USD$", sym):
-            return
-        raise ValueError("En dYdX el símbolo debe tener formato 'ETH-USD' (ej: ETH-USD).")
     if ex == "bybit":
         return
     if sym in FALLBACK_SYMBOLS.get(ex, set()):
         return
     raise ValueError(f"No se reconoce el exchange '{exchange}' o el símbolo {sym} no está permitido.")
-
-
-_DYDX_ADDRESS_RE = re.compile(r"^dydx1[0-9a-z]{10,}$")
-
-
-def _validate_dydx_address(value: str, field: str) -> str:
-    v = (value or "").strip()
-    if not v:
-        raise ValueError(f"{field} es obligatorio para dYdX.")
-    if not _DYDX_ADDRESS_RE.match(v):
-        raise ValueError(f"{field} inválido: debe ser una address dydx1... (minúsculas).")
-    return v
 
 
 def _parse_int(value: Any, field: str, *, default: int | None = None) -> int:
@@ -325,8 +308,6 @@ def _build_credential(payload: Dict[str, Any], default_name: str | None = None, 
     api_secret_env = _validate_env_var_name(api_secret_env, "api_secret_env")
 
     symbol = str(payload.get("symbol") or payload.get("pair") or "").strip().upper()
-    if not symbol and name == "dydx":
-        symbol = "ETH-USD"
     if not symbol:
         raise ValueError("symbol es obligatorio.")
 
@@ -338,18 +319,6 @@ def _build_credential(payload: Dict[str, Any], default_name: str | None = None, 
     leverage = int(leverage_val) if leverage_val not in (None, "", False) else None
     extra = payload.get("extra") if isinstance(payload.get("extra"), dict) else {}
     extra = {**extra, "symbol": symbol}
-    if name == "dydx":
-        # Permissioned keys (API keys del dashboard) soportan signer separado del owner.
-        if "subaccount" not in extra:
-            extra["subaccount"] = _parse_int(payload.get("subaccount"), "subaccount", default=0)
-        # Permite setear desde inputs dedicados (sin obligar a editar JSON)
-        owner_address = payload.get("owner_address") or extra.get("owner_address")
-        signer_address = payload.get("signer_address") or extra.get("signer_address")
-        if owner_address:
-            extra["owner_address"] = _validate_dydx_address(str(owner_address), "owner_address")
-        if signer_address:
-            extra["signer_address"] = _validate_dydx_address(str(signer_address), "signer_address")
-
     return ExchangeCredential(
         exchange=name,
         api_key_env=api_key_env,

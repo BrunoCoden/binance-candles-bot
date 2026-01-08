@@ -143,7 +143,7 @@ def _validate_symbol(exchange: str, environment: ExchangeEnvironment, symbol: st
     """
     Valida el símbolo contra el exchange.
     - Binance: consulta exchangeInfo.
-    - dYdX, Bybit: se acepta sin validar contra la API (asumimos símbolo válido), con fallback si se configuró.
+    - Bybit: se acepta sin validar contra la API (asumimos símbolo válido), con fallback si se configuró.
     - Otros: usa fallback si está configurado.
     """
     ex = exchange.lower()
@@ -166,7 +166,7 @@ def _validate_symbol(exchange: str, environment: ExchangeEnvironment, symbol: st
             if sym in FALLBACK_SYMBOLS.get(ex, set()):
                 return
             raise ValueError(f"No se pudo validar el símbolo en {exchange}: {exc}")
-    if ex in {"dydx", "bybit"}:
+    if ex == "bybit":
         return
     if sym in FALLBACK_SYMBOLS.get(ex, set()):
         return
@@ -273,8 +273,6 @@ def _build_credential(payload: Dict[str, Any], default_name: str | None = None, 
         raise ValueError("api_key_env y api_secret_env son obligatorios (o provée keys en texto para generarlas).")
 
     symbol = str(payload.get("symbol") or payload.get("pair") or "").strip().upper()
-    if not symbol and name == "dydx":
-        symbol = "ETH-USD"
     if not symbol:
         raise ValueError("symbol es obligatorio.")
 
@@ -286,9 +284,6 @@ def _build_credential(payload: Dict[str, Any], default_name: str | None = None, 
     leverage = int(leverage_val) if leverage_val not in (None, "", False) else None
     extra = payload.get("extra") if isinstance(payload.get("extra"), dict) else {}
     extra = {**extra, "symbol": symbol}
-    if name == "dydx" and "subaccount" not in extra:
-        extra["subaccount"] = int(payload.get("subaccount") or 0)
-
     return ExchangeCredential(
         exchange=name,
         api_key_env=api_key_env,

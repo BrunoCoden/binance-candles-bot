@@ -19,12 +19,6 @@ class ExchangeCredential:
     notional_usdt: float | None = None
     leverage: int | None = None
     extra: Dict[str, Any] = field(default_factory=dict)
-    # dYdX v4 soporte: passphrase/stark keys y notional USDC / max position
-    passphrase_env: str | None = None
-    stark_key_env: str | None = None
-    notional_usdc: float | None = None
-    max_position_usdc: float | None = None
-    margin_mode: str | None = None  # 'isolated' o 'cross' (dYdX soporta isolated markets)
 
     def _env_candidates(self, key: str) -> list[str]:
         """

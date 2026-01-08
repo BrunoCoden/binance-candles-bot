@@ -63,11 +63,6 @@ class AccountManager:
                     environment=environment,
                     notional_usdt=notional,
                     leverage=leverage,
-                    passphrase_env=ex_conf.get("passphrase_env"),
-                    stark_key_env=ex_conf.get("stark_key_env"),
-                    notional_usdc=float(ex_conf["notional_usdc"]) if ex_conf.get("notional_usdc") not in (None, "") else None,
-                    max_position_usdc=float(ex_conf["max_position_usdc"]) if ex_conf.get("max_position_usdc") not in (None, "") else None,
-                    margin_mode=ex_conf.get("margin_mode"),
                     extra={
                         **_flatten_extra(ex_conf.get("extra")),
                         **{
@@ -80,11 +75,6 @@ class AccountManager:
                                 "environment",
                                 "notional_usdt",
                                 "leverage",
-                                "passphrase_env",
-                                "stark_key_env",
-                                "notional_usdc",
-                                "max_position_usdc",
-                                "margin_mode",
                                 "extra",
                             }
                         },

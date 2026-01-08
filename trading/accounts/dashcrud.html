@@ -208,7 +208,6 @@
           <label>Exchange
             <select id="ex-name">
               <option value="binance">binance</option>
-              <option value="dydx">dydx</option>
               <option value="bybit">bybit</option>
             </select>
           </label>
@@ -247,29 +246,6 @@
           </label>
         </div>
         <div class="row">
-          <label id="wrap-notional-usdc" style="display:none;">Notional por trade (USDC, dYdX)
-            <input id="ex-notional-usdc" type="number" step="0.01" min="0" placeholder="100" />
-          </label>
-          <label id="wrap-maxpos-usdc" style="display:none;">Max posición (USDC, dYdX)
-            <input id="ex-maxpos-usdc" type="number" step="0.01" min="0" placeholder="500" />
-          </label>
-          <label id="wrap-margin-mode" style="display:none;">Modo margen
-            <select id="ex-margin-mode">
-              <option value="isolated">isolated</option>
-              <option value="cross">cross</option>
-            </select>
-          </label>
-        </div>
-        <div class="row" id="wrap-dydx-auth" style="display:none;">
-          <label>dYdX owner_address (subaccount)
-            <input id="ex-dydx-owner" placeholder="dydx1..." />
-          </label>
-          <label>dYdX signer_address (permissioned key)
-            <input id="ex-dydx-signer" placeholder="dydx1..." />
-          </label>
-          <label>dYdX subaccount
-            <input id="ex-dydx-subaccount" type="number" step="1" min="0" placeholder="0" />
-          </label>
         </div>
         <label>Extra (JSON opcional)
           <textarea id="ex-extra" placeholder='{"hedgeMode":"ISOLATED"}'></textarea>
@@ -302,20 +278,10 @@
     const exLeverage = document.getElementById("ex-leverage");
     const exSymbol = document.getElementById("ex-symbol");
     const exExtra = document.getElementById("ex-extra");
-    const exNotionalUsdc = document.getElementById("ex-notional-usdc");
-    const exMaxPosUsdc = document.getElementById("ex-maxpos-usdc");
-    const exMarginMode = document.getElementById("ex-margin-mode");
-    const exDydxOwner = document.getElementById("ex-dydx-owner");
-    const exDydxSigner = document.getElementById("ex-dydx-signer");
-    const exDydxSubaccount = document.getElementById("ex-dydx-subaccount");
     const wrapPassphrase = null;
     const wrapStark = null;
     const wrapPassphrasePlain = null;
     const wrapStarkPlain = null;
-    const wrapNotionalUsdc = document.getElementById("wrap-notional-usdc");
-    const wrapMaxPosUsdc = document.getElementById("wrap-maxpos-usdc");
-    const wrapMarginMode = document.getElementById("wrap-margin-mode");
-    const wrapDydxAuth = document.getElementById("wrap-dydx-auth");
     const accPathLabel = document.getElementById("accounts-path");
     const pendingWrap = document.getElementById("pending-wrap");
     const pendingLabel = document.getElementById("pending-label");
@@ -329,23 +295,11 @@
     }
     function clearStatus() { statusEl.className = "status"; statusEl.textContent = ""; }
 
-    function toggleDydxFields(name) {
-      const isDydx = name === "dydx";
-      [wrapNotionalUsdc, wrapMaxPosUsdc, wrapMarginMode, wrapDydxAuth].forEach((el) => {
-        if (el) el.style.display = isDydx ? "block" : "none";
-      });
-      // Ajusta placeholders para dYdX (wallet address + private key)
-      if (isDydx) {
-        exKey.placeholder = "API Wallet Address (dYdX)";
-        exSecret.placeholder = "Private key (dYdX)";
-        exKeyPlain.placeholder = "Pegá la wallet address (dYdX)";
-        exSecretPlain.placeholder = "Pegá la private key (dYdX)";
-      } else {
-        exKey.placeholder = "EJ: USER1_BINANCE_KEY";
-        exSecret.placeholder = "EJ: USER1_BINANCE_SECRET";
-        exKeyPlain.placeholder = "Pegá la key aquí";
-        exSecretPlain.placeholder = "Pegá el secret aquí";
-      }
+    function resetExchangePlaceholders() {
+      exKey.placeholder = "EJ: USER1_BINANCE_KEY";
+      exSecret.placeholder = "EJ: USER1_BINANCE_SECRET";
+      exKeyPlain.placeholder = "Pegá la key aquí";
+      exSecretPlain.placeholder = "Pegá el secret aquí";
     }
 
     async function api(path, options = {}) {
@@ -428,16 +382,10 @@
           exKeyPlain.value = "";
           exSecretPlain.value = "";
           exNotional.value = ex.notional_usdt ?? "";
-          exNotionalUsdc.value = ex.notional_usdc ?? "";
-          exMaxPosUsdc.value = ex.max_position_usdc ?? "";
-          exMarginMode.value = ex.margin_mode || "isolated";
           exLeverage.value = ex.leverage ?? "";
           exSymbol.value = ex.symbol || "";
           exExtra.value = ex.extra && Object.keys(ex.extra).length ? JSON.stringify(ex.extra, null, 2) : "";
-          exDydxOwner.value = (ex.extra && ex.extra.owner_address) ? ex.extra.owner_address : "";
-          exDydxSigner.value = (ex.extra && ex.extra.signer_address) ? ex.extra.signer_address : "";
-          exDydxSubaccount.value = (ex.extra && ex.extra.subaccount !== undefined) ? ex.extra.subaccount : "";
-          toggleDydxFields(exName.value);
+          resetExchangePlaceholders();
         }
     }
 
@@ -458,16 +406,10 @@
       exKeyPlain.value = "";
       exSecretPlain.value = "";
       exNotional.value = "";
-      exNotionalUsdc.value = "";
-      exMaxPosUsdc.value = "";
-      exMarginMode.value = "isolated";
       exLeverage.value = "";
       exSymbol.value = "";
       exExtra.value = "";
-      exDydxOwner.value = "";
-      exDydxSigner.value = "";
-      exDydxSubaccount.value = "";
-      toggleDydxFields(exName.value);
+      resetExchangePlaceholders();
     }
 
     async function toggleUser(id, enabled) {
@@ -498,8 +440,6 @@
         exKey.value.trim() ||
         exSecret.value.trim() ||
         exNotional.value ||
-        exNotionalUsdc.value ||
-        exMaxPosUsdc.value ||
         exLeverage.value ||
         exExtra.value.trim() ||
         exKeyPlain.value.trim() ||
@@ -514,14 +454,8 @@
           api_key_plain: exKeyPlain.value.trim(),
           api_secret_plain: exSecretPlain.value.trim(),
           notional_usdt: exNotional.value ? Number(exNotional.value) : null,
-          notional_usdc: exNotionalUsdc.value ? Number(exNotionalUsdc.value) : null,
-          max_position_usdc: exMaxPosUsdc.value ? Number(exMaxPosUsdc.value) : null,
-          margin_mode: exMarginMode.value || null,
           leverage: exLeverage.value ? Number(exLeverage.value) : null,
           symbol: symbolVal.toUpperCase(),
-          owner_address: exDydxOwner.value.trim() || null,
-          signer_address: exDydxSigner.value.trim() || null,
-          subaccount: exDydxSubaccount.value ? Number(exDydxSubaccount.value) : null,
           extra: parseJsonSafe(exExtra.value),
         };
       }
@@ -553,11 +487,6 @@
       try { extra = parseJsonSafe(exExtra.value); }
       catch (err) { showStatus(err.message, "error"); return; }
       if (!exSymbol.value.trim()) { showStatus("Par (símbolo) obligatorio", "error"); return; }
-      const isDydx = exName.value === "dydx";
-      if (isDydx) {
-        if (!exDydxOwner.value.trim()) { showStatus("dYdX owner_address es obligatorio", "error"); return; }
-        if (!exDydxSigner.value.trim()) { showStatus("dYdX signer_address es obligatorio", "error"); return; }
-      }
       const body = {
         exchange: exName.value,
         environment: exEnv.value,
@@ -566,14 +495,8 @@
         api_key_plain: exKeyPlain.value.trim(),
         api_secret_plain: exSecretPlain.value.trim(),
         notional_usdt: exNotional.value ? Number(exNotional.value) : null,
-        notional_usdc: exNotionalUsdc.value ? Number(exNotionalUsdc.value) : null,
-        max_position_usdc: exMaxPosUsdc.value ? Number(exMaxPosUsdc.value) : null,
-        margin_mode: exMarginMode.value || null,
         leverage: exLeverage.value ? Number(exLeverage.value) : null,
         symbol: exSymbol.value.trim().toUpperCase(),
-        owner_address: isDydx ? (exDydxOwner.value.trim() || null) : null,
-        signer_address: isDydx ? (exDydxSigner.value.trim() || null) : null,
-        subaccount: isDydx ? (exDydxSubaccount.value ? Number(exDydxSubaccount.value) : null) : null,
         extra,
       };
       try {
