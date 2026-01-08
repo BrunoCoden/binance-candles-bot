@@ -540,6 +540,11 @@ def _close_position(user_id: str, exchange: str, symbol: str, direction: str) ->
     """
     if _account_manager is None:
         return False
+    if TRADING_DRY_RUN:
+        print(
+            f"[WATCHER][INFO] Dry-run activo: se omite cierre real user={user_id} ex={exchange} symbol={symbol}"
+        )
+        return True
     try:
         account = _account_manager.get_account(user_id)
         cred = account.get_exchange(exchange)
@@ -818,6 +823,11 @@ def _close_opposite_position(user_id: str, exchange: str, direction: str, symbol
     try:
         if _account_manager is None:
             return True
+        if TRADING_DRY_RUN:
+            print(
+                f"[WATCHER][INFO] Dry-run activo: se omite cierre real de opuesta user={user_id} ex={exchange} symbol={symbol}"
+            )
+            return True
         account = _account_manager.get_account(user_id)
         cred = account.get_exchange(exchange)
         pos_amt = _current_position(user_id, exchange, symbol)
@@ -902,6 +912,10 @@ def _submit_trade(event: dict) -> None:
         except Exception as exc:
             print(f"[WATCHER][WARN] Cantidad inválida para trading ({exc}) usuario={user_id} exchange={exchange}")
             continue
+        if exchange.lower() == "binance":
+            # Evita quedar por debajo del mínimo notional tras el redondeo de Binance.
+            step = 0.001
+            quantity = math.ceil(quantity / step) * step
         symbol = event.get("symbol") or SYMBOL_DISPLAY.replace(".P", "")
         if cred and cred.extra:
             symbol = cred.extra.get("symbol", symbol)

@@ -9,7 +9,7 @@ users:
       api_key_env: BRUNO_BINANCE_LIVE_API_KEY
       api_secret_env: BRUNO_BINANCE_LIVE_API_SECRET
       environment: live
-      notional_usdt: 20.0
+      notional_usdt: 5.0
       leverage: 5
       extra:
         symbol: ETHUSDT
