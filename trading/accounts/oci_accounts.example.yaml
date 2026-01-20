@@ -1,0 +1,23 @@
+users:
+  - id: diego
+    label: Cuenta Diego (live)
+    enabled: true
+    exchanges:
+      binance:
+        exchange: binance
+        api_key_env: DIEGO_BINANCE_LIVE_API_KEY
+        api_secret_env: DIEGO_BINANCE_LIVE_API_SECRET
+        environment: live
+        notional_usdt: 1000.0
+        leverage: 5
+        extra:
+          symbol: ETHUSDT
+      bybit:
+        exchange: bybit
+        api_key_env: DIEGO_BYBIT_LIVE_API_KEY
+        api_secret_env: DIEGO_BYBIT_LIVE_API_SECRET
+        environment: live
+        notional_usdt: 1000.0
+        leverage: 5
+        extra:
+          symbol: ETHUSDT

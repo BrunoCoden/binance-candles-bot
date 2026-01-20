@@ -35,6 +35,8 @@ THRESHOLDS_REBUILD_ON_STARTUP = os.getenv("WATCHER_THRESHOLDS_REBUILD_ON_STARTUP
 ACCOUNTS_AUTO_RELOAD = os.getenv("WATCHER_ACCOUNTS_AUTO_RELOAD", "false").lower() == "true"
 DISABLED_ACCOUNTS_AUTO_CLOSE = os.getenv("WATCHER_DISABLED_AUTO_CLOSE", "true").lower() == "true"
 DISABLED_ACCOUNTS_CLOSE_POLL_SECONDS = float(os.getenv("WATCHER_DISABLED_CLOSE_POLL_SECONDS", "30"))
+CLOSE_OPPOSITE_TIMEOUT_SECONDS = float(os.getenv("WATCHER_CLOSE_OPPOSITE_TIMEOUT_SECONDS", "10"))
+CLOSE_OPPOSITE_POLL_SECONDS = float(os.getenv("WATCHER_CLOSE_OPPOSITE_POLL_SECONDS", "0.5"))
 
 _last_disabled_close_attempt: dict[tuple[str, str, str], float] = {}
 
@@ -820,6 +822,22 @@ def _close_opposite_position(user_id: str, exchange: str, direction: str, symbol
         print(
             f"[WATCHER][INFO] Cierre reduceOnly (MARKET) de posición opuesta qty={qty} side={side} en {symbol} ex={exchange}"
         )
+        if CLOSE_OPPOSITE_TIMEOUT_SECONDS > 0:
+            print(
+                f"[WATCHER][INFO] Esperando cierre completo de posición opuesta user={user_id} ex={exchange} symbol={symbol}"
+            )
+            deadline = time.time() + CLOSE_OPPOSITE_TIMEOUT_SECONDS
+            while True:
+                pos_now = _current_position(user_id, exchange, symbol)
+                if abs(pos_now) < 1e-8:
+                    break
+                if time.time() >= deadline:
+                    print(
+                        f"[WATCHER][WARN] Posición opuesta sigue abierta tras espera "
+                        f"user={user_id} ex={exchange} symbol={symbol} pos={pos_now}"
+                    )
+                    return False
+                time.sleep(max(CLOSE_OPPOSITE_POLL_SECONDS, 0.1))
         return True
     except Exception as exc:  # pragma: no cover - externo
         print(f"[WATCHER][WARN] No se pudo verificar/cerrar posición opuesta: {exc}")
