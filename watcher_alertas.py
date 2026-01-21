@@ -429,9 +429,20 @@ def _rebuild_thresholds_from_open_positions() -> None:
         print("[WATCHER][THRESHOLDS][REBUILD] No hay AccountManager; no se reconstruyen umbrales.")
         return
 
+    global _thresholds
     rebuilt = 0
     skipped = 0
+    missing_entry = 0
+    kept_existing = 0
     scanned = 0
+
+    existing = {}
+    for th in _thresholds:
+        key = (th.get("user_id"), th.get("exchange"), th.get("symbol"))
+        if all(key):
+            existing[key] = th
+
+    new_thresholds: list[dict] = []
 
     for account in manager.list_accounts():
         if not account.enabled:
@@ -462,19 +473,64 @@ def _rebuild_thresholds_from_open_positions() -> None:
                     f"[WATCHER][THRESHOLDS][REBUILD][NO_POS] user={account.user_id} ex={exchange} symbol={symbol}"
                 )
                 continue
+            direction = "long" if pos_amt > 0 else "short"
+            key = (account.user_id, exchange, symbol)
             if entry_price is None or entry_price <= 0:
-                print(
-                    f"[WATCHER][THRESHOLDS][REBUILD][SKIP] user={account.user_id} ex={exchange} symbol={symbol} "
-                    f"pos_amt={pos_amt} reason=no_entry_price"
-                )
-                skipped += 1
+                missing_entry += 1
+                prev = existing.get(key)
+                prev_entry = float(prev.get("entry_price") or 0) if prev else 0.0
+                if prev_entry > 0:
+                    loss_price, gain_price = _compute_thresholds(direction, prev_entry)
+                    new_thresholds.append(
+                        {
+                            "user_id": account.user_id,
+                            "exchange": exchange,
+                            "symbol": symbol,
+                            "direction": direction,
+                            "entry_price": prev_entry,
+                            "loss_price": loss_price,
+                            "gain_price": gain_price,
+                            "fired_loss": False,
+                            "fired_gain": False,
+                        }
+                    )
+                    kept_existing += 1
+                    print(
+                        f"[WATCHER][THRESHOLDS][REBUILD][KEEP] user={account.user_id} ex={exchange} "
+                        f"symbol={symbol} entry={prev_entry:.6f} reason=no_entry_price"
+                    )
+                else:
+                    print(
+                        f"[WATCHER][THRESHOLDS][REBUILD][SKIP] user={account.user_id} ex={exchange} "
+                        f"symbol={symbol} pos_amt={pos_amt} reason=no_entry_price"
+                    )
+                    skipped += 1
                 continue
 
-            direction = "long" if pos_amt > 0 else "short"
-            _register_threshold(account.user_id, exchange, symbol, direction, float(entry_price))
+            entry_val = float(entry_price)
+            loss_price, gain_price = _compute_thresholds(direction, entry_val)
+            new_thresholds.append(
+                {
+                    "user_id": account.user_id,
+                    "exchange": exchange,
+                    "symbol": symbol,
+                    "direction": direction,
+                    "entry_price": entry_val,
+                    "loss_price": loss_price,
+                    "gain_price": gain_price,
+                    "fired_loss": False,
+                    "fired_gain": False,
+                }
+            )
             rebuilt += 1
 
-    print(f"[WATCHER][THRESHOLDS][REBUILD] done scanned={scanned} rebuilt={rebuilt} skipped={skipped}")
+    _thresholds = new_thresholds
+    _save_thresholds()
+    removed = max(len(existing) - len(new_thresholds), 0)
+    print(
+        f"[WATCHER][THRESHOLDS][REBUILD] done scanned={scanned} rebuilt={rebuilt} kept={kept_existing} "
+        f"missing_entry={missing_entry} skipped={skipped} removed={removed}"
+    )
 
 
 def _current_position(user_id: str, exchange: str, symbol: str) -> float:
