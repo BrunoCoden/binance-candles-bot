@@ -98,6 +98,62 @@ def _bybit_position_amount(cred: ExchangeCredential, symbol: str) -> float:
         return 0.0
 
 
+def _bybit_mark_price(cred: ExchangeCredential, symbol: str) -> float | None:
+    """
+    Obtiene mark price desde Bybit (fallback: last price).
+    """
+    try:
+        from pybit.unified_trading import HTTP  # type: ignore
+
+        api_key, api_secret = cred.resolve_keys(os.environ)
+        is_testnet = cred.environment != ExchangeEnvironment.LIVE
+        domain_env = os.getenv("BYBIT_DOMAIN_TESTNET" if is_testnet else "BYBIT_DOMAIN")
+        client = (
+            HTTP(api_key=api_key, api_secret=api_secret, testnet=False, domain=domain_env)
+            if domain_env
+            else HTTP(api_key=api_key, api_secret=api_secret, testnet=is_testnet)
+        )
+        raw = client.get_tickers(category="linear", symbol=symbol)
+        items = raw.get("result", {}).get("list") or []
+        if not items:
+            return None
+        data = items[0] or {}
+        for key in ("markPrice", "indexPrice", "lastPrice"):
+            val = data.get(key)
+            if val:
+                return float(val)
+    except Exception:
+        return None
+    return None
+
+
+def _binance_mark_price(cred: ExchangeCredential, symbol: str) -> float | None:
+    """
+    Obtiene mark price desde Binance (preferido para triggers en tiempo real).
+    """
+    try:
+        api_key, api_secret = cred.resolve_keys(os.environ)
+    except Exception:
+        api_key = None
+        api_secret = None
+    try:
+        base_url = "https://testnet.binancefuture.com" if cred.environment == ExchangeEnvironment.TESTNET else None
+        if api_key and api_secret:
+            client = UMFutures(key=api_key, secret=api_secret, base_url=base_url) if base_url else UMFutures(
+                key=api_key, secret=api_secret
+            )
+        else:
+            client = UMFutures(base_url=base_url) if base_url else UMFutures()
+        data = client.mark_price(symbol=symbol)
+        if isinstance(data, dict):
+            price = data.get("markPrice") or data.get("indexPrice")
+            if price:
+                return float(price)
+    except Exception:
+        return None
+    return None
+
+
 def _close_disabled_accounts_positions() -> None:
     """
     Si un usuario está enabled=false, intenta cerrar posiciones abiertas en todos sus exchanges.
@@ -711,6 +767,7 @@ def _evaluate_thresholds(current_price: float, ts) -> list[dict]:
     updated = False
     keep_thresholds = []
 
+    price_cache: dict[tuple[str, str], float | None] = {}
     for th in _thresholds:
         user_id = th.get("user_id")
         exchange = th.get("exchange")
@@ -734,21 +791,49 @@ def _evaluate_thresholds(current_price: float, ts) -> list[dict]:
             updated = True
             continue
 
+        used_price = None
+        price_key = (str(exchange).lower(), symbol)
+        if price_key in price_cache:
+            used_price = price_cache[price_key]
+        else:
+            if exchange:
+                ex_l = str(exchange).lower()
+                try:
+                    manager = _account_manager or _load_manager()
+                    if manager is not None and user_id:
+                        account = manager.get_account(user_id)
+                        cred = account.get_exchange(exchange)
+                        if ex_l == "binance":
+                            used_price = _binance_mark_price(cred, symbol)
+                        elif ex_l == "bybit":
+                            used_price = _bybit_mark_price(cred, symbol)
+                except Exception:
+                    used_price = None
+            price_cache[price_key] = used_price
+        if used_price is None:
+            used_price = current_price
+        try:
+            used_price = float(used_price)
+        except Exception:
+            continue
+        if used_price <= 0:
+            continue
+
         hit_loss = False
         hit_gain = False
         if direction == "long":
-            hit_loss = (not fired_loss) and current_price <= loss_price
-            hit_gain = (not fired_gain) and current_price >= gain_price
+            hit_loss = (not fired_loss) and used_price <= loss_price
+            hit_gain = (not fired_gain) and used_price >= gain_price
         else:  # short
-            hit_loss = (not fired_loss) and current_price >= loss_price
-            hit_gain = (not fired_gain) and current_price <= gain_price
+            hit_loss = (not fired_loss) and used_price >= loss_price
+            hit_gain = (not fired_gain) and used_price <= gain_price
 
         if hit_loss or hit_gain:
             kind = "ganancia +9%" if hit_gain else "pérdida -5%"
             # Ejecuta cierre reduceOnly MARKET del tamaño actual
             print(
                 f"[WATCHER][THRESHOLDS][TRIGGER] user={user_id} ex={exchange} symbol={symbol} dir={direction} "
-                f"last={current_price:.6f} entry={entry:.6f} loss={loss_price:.6f} gain={gain_price:.6f} kind={kind}"
+                f"last={used_price:.6f} entry={entry:.6f} loss={loss_price:.6f} gain={gain_price:.6f} kind={kind}"
             )
             close_ok = _close_position(user_id, exchange, symbol, direction)
             print(
@@ -762,7 +847,7 @@ def _evaluate_thresholds(current_price: float, ts) -> list[dict]:
                         f"{symbol} {STREAM_INTERVAL}\n"
                         f"Cierre {direction.upper()} por {kind}\n"
                         f"Entrada: {entry:.2f}\n"
-                        f"Último: {current_price:.2f}"
+                        f"Último: {used_price:.2f}"
                     ),
                     "direction": direction,
                     "user_id": user_id,
@@ -1215,14 +1300,13 @@ def main():
                         current_price = float(df["Close"].iloc[-1])
                 except Exception:
                     pass
-                if current_price:
-                    ts_eval = datetime.now(timezone.utc)
-                    try:
-                        extra_alerts = _evaluate_thresholds(current_price, ts_eval)
-                        if extra_alerts:
-                            send_alerts(extra_alerts)
-                    except Exception as exc:
-                        print(f"[ALERT][WARN] Falló evaluación periódica de umbrales ({exc})")
+                ts_eval = datetime.now(timezone.utc)
+                try:
+                    extra_alerts = _evaluate_thresholds(current_price or 0.0, ts_eval)
+                    if extra_alerts:
+                        send_alerts(extra_alerts)
+                except Exception as exc:
+                    print(f"[ALERT][WARN] Falló evaluación periódica de umbrales ({exc})")
             except Exception:
                 pass
 
