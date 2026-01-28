@@ -176,11 +176,13 @@ def _close_disabled_accounts_positions() -> None:
             symbol = (cred.extra or {}).get("symbol") or SYMBOL_DISPLAY.replace(".P", "")
             try:
                 pos_amt = _current_position(account.user_id, exchange, symbol)
-                # fallback específico Bybit si el helper legacy no lo soporta
-                if pos_amt == 0 and exchange.lower() == "bybit":
-                    pos_amt = _bybit_position_amount(cred, symbol)
             except Exception:
-                pos_amt = 0.0
+                pos_amt = None
+            if pos_amt is None:
+                continue
+            # fallback específico Bybit si el helper legacy no lo soporta
+            if pos_amt == 0 and exchange.lower() == "bybit":
+                pos_amt = _bybit_position_amount(cred, symbol)
             if not pos_amt:
                 continue
 
@@ -589,17 +591,17 @@ def _rebuild_thresholds_from_open_positions() -> None:
     )
 
 
-def _current_position(user_id: str, exchange: str, symbol: str) -> float:
+def _current_position(user_id: str, exchange: str, symbol: str) -> float | None:
     """
     Devuelve cantidad firmada de la posición actual (long >0, short <0).
-    Implementado para binance/bybit; si falla devuelve 0.
+    Implementado para binance/bybit; si falla devuelve None.
     """
     try:
         # En dry-run no consultamos exchanges (evita requests reales en simulaciones).
         if TRADING_DRY_RUN:
             return 0.0
         if _account_manager is None:
-            return 0.0
+            return None
         account = _account_manager.get_account(user_id)
         cred = account.get_exchange(exchange)
         if exchange.lower() == "binance":
@@ -616,7 +618,7 @@ def _current_position(user_id: str, exchange: str, symbol: str) -> float:
             return _bybit_position_amount(cred, symbol)
         return 0.0
     except Exception:
-        return 0.0
+        return None
 
 
 def _close_position(user_id: str, exchange: str, symbol: str, direction: str) -> bool:
@@ -635,6 +637,12 @@ def _close_position(user_id: str, exchange: str, symbol: str, direction: str) ->
         account = _account_manager.get_account(user_id)
         cred = account.get_exchange(exchange)
         pos_amt = _current_position(user_id, exchange, symbol)
+        if pos_amt is None:
+            return False
+        if pos_amt is None:
+            return False
+        if pos_amt is None:
+            return False
         if pos_amt == 0:
             return False
         qty = abs(pos_amt)
@@ -783,6 +791,13 @@ def _evaluate_thresholds(current_price: float, ts) -> list[dict]:
             continue
         # Si ya no hay posición, limpiar registro
         pos_amt = _current_position(user_id, exchange, symbol)
+        if pos_amt is None:
+            print(
+                f"[WATCHER][THRESHOLDS][SKIP] user={user_id} ex={exchange} symbol={symbol} "
+                f"reason=position_unknown"
+            )
+            keep_thresholds.append(th)
+            continue
         if pos_amt == 0:
             print(
                 f"[WATCHER][THRESHOLDS][CLEAN] user={user_id} ex={exchange} symbol={symbol} "
@@ -878,6 +893,8 @@ def _has_open_position_same_direction(user_id: str, exchange: str, direction: st
         account = _account_manager.get_account(user_id)
         cred = account.get_exchange(exchange)
         pos_amt = _current_position(user_id, exchange, symbol)
+        if pos_amt is None:
+            return False
         if direction == "long" and pos_amt > 0:
             return True
         if direction == "short" and pos_amt < 0:
@@ -898,6 +915,8 @@ def _has_opposite_position(user_id: str, exchange: str, direction: str, symbol: 
         account = _account_manager.get_account(user_id)
         cred = account.get_exchange(exchange)
         pos_amt = _current_position(user_id, exchange, symbol)
+        if pos_amt is None:
+            return False
         if direction == "long" and pos_amt < 0:
             return True
         if direction == "short" and pos_amt > 0:
@@ -937,6 +956,11 @@ def _close_opposite_position(user_id: str, exchange: str, direction: str, symbol
         account = _account_manager.get_account(user_id)
         cred = account.get_exchange(exchange)
         pos_amt = _current_position(user_id, exchange, symbol)
+        if pos_amt is None:
+            print(
+                f"[WATCHER][WARN] Posición opuesta desconocida user={user_id} ex={exchange} symbol={symbol}"
+            )
+            return False
         if pos_amt == 0:
             return True
         # Chequear si es opuesto
@@ -1067,6 +1091,12 @@ def _close_opposite_position(user_id: str, exchange: str, direction: str, symbol
             deadline = time.time() + CLOSE_OPPOSITE_TIMEOUT_SECONDS
             while True:
                 pos_now = _current_position(user_id, exchange, symbol)
+                if pos_now is None:
+                    print(
+                        f"[WATCHER][WARN] Posición opuesta desconocida durante espera "
+                        f"user={user_id} ex={exchange} symbol={symbol}"
+                    )
+                    return False
                 if abs(pos_now) < 1e-8:
                     break
                 if time.time() >= deadline:
