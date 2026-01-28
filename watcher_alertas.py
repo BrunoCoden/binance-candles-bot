@@ -1213,6 +1213,7 @@ POLL_SECONDS = float(os.getenv("ALERT_POLL_SECONDS", "5"))
 MAX_SEEN = int(os.getenv("ALERT_MAX_SEEN", "500"))
 SEND_STARTUP_TEST = os.getenv("WATCHER_STARTUP_TEST_ALERT", "true").lower() == "true"
 THRESHOLD_POLL_SECONDS = float(os.getenv("THRESHOLD_POLL_SECONDS", "1"))
+THRESHOLDS_DUMP_SECONDS = float(os.getenv("THRESHOLDS_DUMP_SECONDS", "300"))
 
 
 def _notify_startup():
@@ -1258,11 +1259,48 @@ def _notify_startup():
         print(f"[WATCHER][WARN] No se pudo enviar la alerta de prueba: {exc}")
 
 
+def _dump_thresholds(ts: datetime) -> None:
+    manager = _account_manager or _load_manager()
+    print(f"[WATCHER][THRESHOLDS][DUMP] ts={ts.isoformat()} count={len(_thresholds)}")
+    if not _thresholds:
+        return
+    price_cache: dict[tuple[str, str], float | None] = {}
+    for th in _thresholds:
+        user_id = th.get("user_id")
+        exchange = th.get("exchange")
+        symbol = th.get("symbol", SYMBOL_DISPLAY.replace(".P", ""))
+        entry = float(th.get("entry_price") or 0)
+        loss_price = float(th.get("loss_price") or 0)
+        gain_price = float(th.get("gain_price") or 0)
+        mark = None
+        ex_key = str(exchange).lower() if exchange else ""
+        cache_key = (ex_key, symbol)
+        if cache_key in price_cache:
+            mark = price_cache[cache_key]
+        else:
+            if manager is not None and user_id and exchange:
+                try:
+                    account = manager.get_account(user_id)
+                    cred = account.get_exchange(exchange)
+                    if ex_key == "binance":
+                        mark = _binance_mark_price(cred, symbol)
+                    elif ex_key == "bybit":
+                        mark = _bybit_mark_price(cred, symbol)
+                except Exception:
+                    mark = None
+            price_cache[cache_key] = mark
+        print(
+            f"[WATCHER][THRESHOLDS][DUMP] user={user_id} ex={exchange} symbol={symbol} "
+            f"entry={entry:.6f} loss={loss_price:.6f} gain={gain_price:.6f} mark={mark}"
+        )
+
+
 def main():
     seen = []
     _notify_startup()
     last_threshold_check = 0.0
     last_disabled_check = 0.0
+    last_threshold_dump = 0.0
     if THRESHOLDS_CLEAR_ON_STARTUP:
         _clear_thresholds_file()
     if THRESHOLDS_REBUILD_ON_STARTUP:
@@ -1339,6 +1377,13 @@ def main():
                     print(f"[ALERT][WARN] Falló evaluación periódica de umbrales ({exc})")
             except Exception:
                 pass
+
+        if THRESHOLDS_DUMP_SECONDS > 0 and now_ts - last_threshold_dump >= THRESHOLDS_DUMP_SECONDS:
+            last_threshold_dump = now_ts
+            try:
+                _dump_thresholds(datetime.now(timezone.utc))
+            except Exception as exc:
+                print(f"[WATCHER][WARN] Falló dump de umbrales ({exc})")
 
         time.sleep(POLL_SECONDS)
 
