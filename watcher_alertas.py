@@ -786,6 +786,9 @@ def _evaluate_thresholds(current_price: float, ts) -> list[dict]:
         gain_price = float(th.get("gain_price") or 0)
         fired_loss = th.get("fired_loss", False)
         fired_gain = th.get("fired_gain", False)
+        triggered_kind = th.get("triggered_kind")
+        last_attempt = float(th.get("last_close_attempt") or 0.0)
+        now_ts = time.time()
 
         if entry <= 0:
             continue
@@ -834,6 +837,42 @@ def _evaluate_thresholds(current_price: float, ts) -> list[dict]:
         if used_price <= 0:
             continue
 
+        if triggered_kind:
+            if now_ts - last_attempt < THRESHOLDS_RETRY_SECONDS:
+                keep_thresholds.append(th)
+                continue
+            close_ok = _close_position(user_id, exchange, symbol, direction)
+            th["last_close_attempt"] = now_ts
+            if close_ok:
+                print(
+                    f"[WATCHER][THRESHOLDS][CLOSE] user={user_id} ex={exchange} symbol={symbol} "
+                    f"ok=True kind={triggered_kind}"
+                )
+                alerts.append(
+                    {
+                        "type": "auto_close",
+                        "timestamp": ts,
+                        "message": (
+                            f"{symbol} {STREAM_INTERVAL}\n"
+                            f"Cierre {direction.upper()} por {triggered_kind}\n"
+                            f"Entrada: {entry:.2f}\n"
+                            f"Último: {used_price:.2f}"
+                        ),
+                        "direction": direction,
+                        "user_id": user_id,
+                        "exchange": exchange,
+                    }
+                )
+                updated = True
+                continue
+            print(
+                f"[WATCHER][THRESHOLDS][RETRY] user={user_id} ex={exchange} symbol={symbol} "
+                f"kind={triggered_kind} next_in={THRESHOLDS_RETRY_SECONDS}s"
+            )
+            updated = True
+            keep_thresholds.append(th)
+            continue
+
         hit_loss = False
         hit_gain = False
         if direction == "long":
@@ -851,26 +890,38 @@ def _evaluate_thresholds(current_price: float, ts) -> list[dict]:
                 f"last={used_price:.6f} entry={entry:.6f} loss={loss_price:.6f} gain={gain_price:.6f} kind={kind}"
             )
             close_ok = _close_position(user_id, exchange, symbol, direction)
+            th["last_close_attempt"] = now_ts
+            if close_ok:
+                print(
+                    f"[WATCHER][THRESHOLDS][CLOSE] user={user_id} ex={exchange} symbol={symbol} ok=True kind={kind}"
+                )
+                alerts.append(
+                    {
+                        "type": "auto_close",
+                        "timestamp": ts,
+                        "message": (
+                            f"{symbol} {STREAM_INTERVAL}\n"
+                            f"Cierre {direction.upper()} por {kind}\n"
+                            f"Entrada: {entry:.2f}\n"
+                            f"Último: {used_price:.2f}"
+                        ),
+                        "direction": direction,
+                        "user_id": user_id,
+                        "exchange": exchange,
+                    }
+                )
+                updated = True
+                # una vez disparado, removemos el registro (se reemplaza con la próxima operación)
+                continue
+            th["triggered_kind"] = kind
+            th["fired_loss"] = hit_loss or fired_loss
+            th["fired_gain"] = hit_gain or fired_gain
             print(
-                f"[WATCHER][THRESHOLDS][CLOSE] user={user_id} ex={exchange} symbol={symbol} ok={close_ok} kind={kind}"
-            )
-            alerts.append(
-                {
-                    "type": "auto_close",
-                    "timestamp": ts,
-                    "message": (
-                        f"{symbol} {STREAM_INTERVAL}\n"
-                        f"Cierre {direction.upper()} por {kind}\n"
-                        f"Entrada: {entry:.2f}\n"
-                        f"Último: {used_price:.2f}"
-                    ),
-                    "direction": direction,
-                    "user_id": user_id,
-                    "exchange": exchange,
-                }
+                f"[WATCHER][THRESHOLDS][RETRY] user={user_id} ex={exchange} symbol={symbol} "
+                f"kind={kind} next_in={THRESHOLDS_RETRY_SECONDS}s"
             )
             updated = True
-            # una vez disparado, removemos el registro (se reemplaza con la próxima operación)
+            keep_thresholds.append(th)
             continue
 
         keep_thresholds.append(th)
@@ -1214,6 +1265,8 @@ MAX_SEEN = int(os.getenv("ALERT_MAX_SEEN", "500"))
 SEND_STARTUP_TEST = os.getenv("WATCHER_STARTUP_TEST_ALERT", "true").lower() == "true"
 THRESHOLD_POLL_SECONDS = float(os.getenv("THRESHOLD_POLL_SECONDS", "1"))
 THRESHOLDS_DUMP_SECONDS = float(os.getenv("THRESHOLDS_DUMP_SECONDS", "300"))
+THRESHOLDS_RETRY_SECONDS = float(os.getenv("THRESHOLDS_RETRY_SECONDS", "10"))
+THRESHOLDS_DUMP_SECONDS = float(os.getenv("THRESHOLDS_DUMP_SECONDS", "300"))
 
 
 def _notify_startup():
@@ -1273,6 +1326,8 @@ def _dump_thresholds(ts: datetime) -> None:
         loss_price = float(th.get("loss_price") or 0)
         gain_price = float(th.get("gain_price") or 0)
         mark = None
+        triggered_kind = th.get("triggered_kind")
+        last_attempt = th.get("last_close_attempt")
         ex_key = str(exchange).lower() if exchange else ""
         cache_key = (ex_key, symbol)
         if cache_key in price_cache:
@@ -1291,7 +1346,8 @@ def _dump_thresholds(ts: datetime) -> None:
             price_cache[cache_key] = mark
         print(
             f"[WATCHER][THRESHOLDS][DUMP] user={user_id} ex={exchange} symbol={symbol} "
-            f"entry={entry:.6f} loss={loss_price:.6f} gain={gain_price:.6f} mark={mark}"
+            f"entry={entry:.6f} loss={loss_price:.6f} gain={gain_price:.6f} mark={mark} "
+            f"triggered={triggered_kind} last_attempt={last_attempt}"
         )
 
 
