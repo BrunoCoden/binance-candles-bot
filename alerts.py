@@ -19,7 +19,7 @@ from velas import (
 
 
 ALERT_STREAM_BARS = int(os.getenv("ALERT_STREAM_BARS", "5000"))
-STOP_LOSS_PCT = float(os.getenv("STRAT_STOP_LOSS_PCT", "0.05"))
+STOP_LOSS_PCT = float(os.getenv("STRAT_STOP_LOSS_PCT", "0.02"))
 TAKE_PROFIT_PCT = float(os.getenv("STRAT_TAKE_PROFIT_PCT", "0.095"))
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 _chat_ids_raw = os.getenv("TELEGRAM_CHAT_IDS", "")

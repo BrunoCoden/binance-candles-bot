@@ -28,8 +28,8 @@ _accounts_mtime: float | None = None
 _last_order_direction: dict[tuple[str, str], str] = {}
 _thresholds: list[dict] = []
 THRESHOLDS_PATH = Path("backtest/backtestTR/pending_thresholds.json")
-LOSS_PCT = 0.05  # 5% en contra
-GAIN_PCT = 0.09  # 9% a favor
+LOSS_PCT = float(os.getenv("WATCHER_CONTRA_THRESHOLD_PCT", "0.02"))  # 2% en contra
+GAIN_PCT = 0.0  # sin TP en esta lógica
 THRESHOLDS_CLEAR_ON_STARTUP = os.getenv("WATCHER_THRESHOLDS_CLEAR_ON_STARTUP", "false").lower() == "true"
 THRESHOLDS_REBUILD_ON_STARTUP = os.getenv("WATCHER_THRESHOLDS_REBUILD_ON_STARTUP", "false").lower() == "true"
 ACCOUNTS_AUTO_RELOAD = os.getenv("WATCHER_ACCOUNTS_AUTO_RELOAD", "false").lower() == "true"
@@ -310,6 +310,14 @@ def _direction_to_side(direction: str | None) -> OrderSide:
     return mapping[key]
 
 
+def _opposite_direction(direction: str) -> str:
+    if direction == "long":
+        return "short"
+    if direction == "short":
+        return "long"
+    raise ValueError(f"Dirección inválida para invertir: {direction}")
+
+
 def _resolve_quantity(event: dict, notional_usdt: float | None = None) -> float:
     price = _price_from_event(event)
     # Prioridad: cantidad explícita en evento -> notional USDT (desde DashCRUD/YAML por usuario/exchange)
@@ -355,22 +363,23 @@ def _price_from_event(event: dict) -> float | None:
 
 def _compute_thresholds(direction: str, entry_price: float) -> tuple[float, float]:
     """
-    Calcula precios objetivo para cierre por pérdida/ganancia fija.
-    Long: loss = -5%, gain = +9%
-    Short: loss = +5% (en contra), gain = -9% (a favor).
+    Calcula precio de cierre por pérdida fija (2%).
+    Long: loss = -2%
+    Short: loss = +2% (en contra)
     """
     if direction == "long":
         loss_price = entry_price * (1 - LOSS_PCT)
-        gain_price = entry_price * (1 + GAIN_PCT)
     else:
         loss_price = entry_price * (1 + LOSS_PCT)
-        gain_price = entry_price * (1 - GAIN_PCT)
+    gain_price = None
     return loss_price, gain_price
 
 
-def _register_threshold(user_id: str, exchange: str, symbol: str, direction: str, entry_price: float):
+def _register_threshold(
+    user_id: str, exchange: str, symbol: str, direction: str, entry_price: float, signal_direction: str | None
+):
     """
-    Registra umbrales de cierre (-5% / +9%) para una nueva operación.
+    Registra umbral de cierre (-2%) para una nueva operación.
     Reemplaza cualquier registro previo del mismo usuario/exchange/símbolo.
     """
     global _thresholds
@@ -391,6 +400,7 @@ def _register_threshold(user_id: str, exchange: str, symbol: str, direction: str
             "exchange": exchange,
             "symbol": symbol,
             "direction": direction,
+            "signal_direction": signal_direction,
             "entry_price": entry_price,
             "loss_price": loss_price,
             "gain_price": gain_price,
@@ -400,9 +410,106 @@ def _register_threshold(user_id: str, exchange: str, symbol: str, direction: str
     )
     print(
         f"[WATCHER][THRESHOLDS][REGISTER] user={user_id} ex={exchange} symbol={symbol} dir={direction} "
-        f"entry={entry_price:.6f} loss={loss_price:.6f} gain={gain_price:.6f}"
+        f"entry={entry_price:.6f} loss={loss_price:.6f} gain={gain_price}"
     )
     _save_thresholds()
+
+
+def _update_threshold_from_signal(
+    user_id: str,
+    exchange: str,
+    symbol: str,
+    position_direction: str,
+    signal_direction: str,
+    entry_price: float,
+) -> None:
+    global _thresholds
+    loss_price, gain_price = _compute_thresholds(position_direction, entry_price)
+    _thresholds = [
+        th
+        for th in _thresholds
+        if not (
+            th.get("user_id") == user_id
+            and th.get("exchange") == exchange
+            and th.get("symbol") == symbol
+        )
+    ]
+    _thresholds.append(
+        {
+            "user_id": user_id,
+            "exchange": exchange,
+            "symbol": symbol,
+            "direction": position_direction,
+            "signal_direction": signal_direction,
+            "entry_price": entry_price,
+            "loss_price": loss_price,
+            "gain_price": gain_price,
+            "fired_loss": False,
+            "fired_gain": False,
+        }
+    )
+    print(
+        f"[WATCHER][THRESHOLDS][UPDATE] user={user_id} ex={exchange} symbol={symbol} dir={position_direction} "
+        f"entry={entry_price:.6f} loss={loss_price:.6f}"
+    )
+    _save_thresholds()
+
+
+def _execute_trade_for_target(
+    user_id: str,
+    exchange: str,
+    direction: str,
+    symbol: str,
+    price: float,
+    source_event: str,
+    signal_direction: str | None = None,
+) -> tuple[bool, float | None]:
+    executor = _resolve_executor()
+    if executor is None:
+        return False, None
+    account = _account_manager.get_account(user_id) if _account_manager else None
+    cred = account.get_exchange(exchange) if account else None
+    notional = None
+    if cred:
+        notional = cred.notional_usdt
+        if cred.extra:
+            symbol = cred.extra.get("symbol", symbol)
+    try:
+        quantity = _resolve_quantity({"price": price}, notional_usdt=notional)
+    except Exception as exc:
+        print(
+            f"[WATCHER][WARN] Cantidad inválida para trading ({exc}) usuario={user_id} exchange={exchange}"
+        )
+        return False, None
+    if exchange.lower() == "binance":
+        step = 0.001
+        quantity = math.ceil(quantity / step) * step
+    side = _direction_to_side(direction)
+    extra = {
+        "source_event": source_event,
+        "account": user_id,
+        "exchange": exchange,
+        "signal_direction": signal_direction,
+    }
+    order = OrderRequest(
+        symbol=symbol,
+        side=side,
+        type=OrderType.MARKET,
+        quantity=quantity,
+        price=None,
+        time_in_force=TimeInForce.GTC,
+        extra_params=extra,
+    )
+    response = executor.execute(user_id, exchange, order, dry_run=TRADING_DRY_RUN)
+    err = getattr(response, "error", None)
+    err_text = f" error={err}" if err else ""
+    print(
+        f"[WATCHER][TRADE] user={user_id} ex={exchange} success={response.success} status={response.status}{err_text} raw={response.raw}"
+    )
+    if response.success:
+        _last_order_direction[(user_id, exchange)] = direction
+        return True, float(response.avg_price or price)
+    return False, None
 
 
 def _binance_position_details(cred: ExchangeCredential, symbol: str) -> tuple[float, float | None]:
@@ -476,7 +583,7 @@ def _bybit_position_details(cred: ExchangeCredential, symbol: str) -> tuple[floa
 
 def _rebuild_thresholds_from_open_positions() -> None:
     """
-    Recalcula umbrales (-5%/+9%) en base a las posiciones abiertas actuales.
+    Recalcula umbrales (-2%) en base a las posiciones abiertas actuales.
     - Requiere acceso a exchanges (no dry-run).
     - Si no se puede obtener entry_price, omite ese par y deja log.
     """
@@ -546,6 +653,7 @@ def _rebuild_thresholds_from_open_positions() -> None:
                             "exchange": exchange,
                             "symbol": symbol,
                             "direction": direction,
+                            "signal_direction": prev.get("signal_direction") if prev else direction,
                             "entry_price": prev_entry,
                             "loss_price": loss_price,
                             "gain_price": gain_price,
@@ -574,6 +682,7 @@ def _rebuild_thresholds_from_open_positions() -> None:
                     "exchange": exchange,
                     "symbol": symbol,
                     "direction": direction,
+                    "signal_direction": direction,
                     "entry_price": entry_val,
                     "loss_price": loss_price,
                     "gain_price": gain_price,
@@ -782,9 +891,11 @@ def _evaluate_thresholds(current_price: float, ts) -> list[dict]:
         exchange = th.get("exchange")
         symbol = th.get("symbol", SYMBOL_DISPLAY.replace(".P", ""))
         direction = th.get("direction")
+        signal_direction = th.get("signal_direction") or None
         entry = float(th.get("entry_price") or 0)
         loss_price = float(th.get("loss_price") or 0)
-        gain_price = float(th.get("gain_price") or 0)
+        gain_raw = th.get("gain_price")
+        gain_price = float(gain_raw) if gain_raw not in (None, "") else None
         fired_loss = th.get("fired_loss", False)
         fired_gain = th.get("fired_gain", False)
         triggered_kind = th.get("triggered_kind")
@@ -838,6 +949,7 @@ def _evaluate_thresholds(current_price: float, ts) -> list[dict]:
         if used_price <= 0:
             continue
 
+        flip_direction = signal_direction or _opposite_direction(direction)
         if triggered_kind:
             if now_ts - last_attempt < THRESHOLDS_RETRY_SECONDS:
                 keep_thresholds.append(th)
@@ -849,6 +961,20 @@ def _evaluate_thresholds(current_price: float, ts) -> list[dict]:
                     f"[WATCHER][THRESHOLDS][CLOSE] user={user_id} ex={exchange} symbol={symbol} "
                     f"ok=True kind={triggered_kind}"
                 )
+                open_ok, _ = _execute_trade_for_target(
+                    user_id,
+                    exchange,
+                    flip_direction,
+                    symbol,
+                    used_price,
+                    source_event="threshold_flip",
+                    signal_direction=signal_direction,
+                )
+                if not open_ok:
+                    print(
+                        f"[WATCHER][WARN] No se pudo abrir flip user={user_id} ex={exchange} "
+                        f"symbol={symbol} dir={flip_direction}"
+                    )
                 alerts.append(
                     {
                         "type": "auto_close",
@@ -878,17 +1004,17 @@ def _evaluate_thresholds(current_price: float, ts) -> list[dict]:
         hit_gain = False
         if direction == "long":
             hit_loss = (not fired_loss) and used_price <= loss_price
-            hit_gain = (not fired_gain) and used_price >= gain_price
+            hit_gain = gain_price is not None and (not fired_gain) and used_price >= gain_price
         else:  # short
             hit_loss = (not fired_loss) and used_price >= loss_price
-            hit_gain = (not fired_gain) and used_price <= gain_price
+            hit_gain = gain_price is not None and (not fired_gain) and used_price <= gain_price
 
         if hit_loss or hit_gain:
-            kind = "ganancia +9%" if hit_gain else "pérdida -5%"
+            kind = "ganancia" if hit_gain else f"pérdida -{int(LOSS_PCT * 100)}%"
             # Ejecuta cierre reduceOnly MARKET del tamaño actual
             print(
                 f"[WATCHER][THRESHOLDS][TRIGGER] user={user_id} ex={exchange} symbol={symbol} dir={direction} "
-                f"last={used_price:.6f} entry={entry:.6f} loss={loss_price:.6f} gain={gain_price:.6f} kind={kind}"
+                f"last={used_price:.6f} entry={entry:.6f} loss={loss_price:.6f} gain={gain_price} kind={kind}"
             )
             close_ok = _close_position(user_id, exchange, symbol, direction)
             th["last_close_attempt"] = now_ts
@@ -896,6 +1022,20 @@ def _evaluate_thresholds(current_price: float, ts) -> list[dict]:
                 print(
                     f"[WATCHER][THRESHOLDS][CLOSE] user={user_id} ex={exchange} symbol={symbol} ok=True kind={kind}"
                 )
+                open_ok, _ = _execute_trade_for_target(
+                    user_id,
+                    exchange,
+                    flip_direction,
+                    symbol,
+                    used_price,
+                    source_event="threshold_flip",
+                    signal_direction=signal_direction,
+                )
+                if not open_ok:
+                    print(
+                        f"[WATCHER][WARN] No se pudo abrir flip user={user_id} ex={exchange} "
+                        f"symbol={symbol} dir={flip_direction}"
+                    )
                 alerts.append(
                     {
                         "type": "auto_close",
@@ -1174,11 +1314,12 @@ def _submit_trade(event: dict) -> None:
         print("[WATCHER][WARN] No hay cuentas habilitadas/filtradas para operar; se omite trading.")
         return
     try:
-        side = _direction_to_side(event.get("direction"))
+        signal_direction = (event.get("direction") or "").lower()
+        order_direction = _opposite_direction(signal_direction)
+        side = _direction_to_side(order_direction)
     except Exception as exc:
         print(f"[WATCHER][WARN] No se pudo determinar dirección para trading: {exc}")
         return
-    direction = (event.get("direction") or "").lower()
 
     price = _price_from_event(event)
     if price is None or price <= 0:
@@ -1209,21 +1350,42 @@ def _submit_trade(event: dict) -> None:
         if cred and cred.extra:
             symbol = cred.extra.get("symbol", symbol)
 
+        pos_amt = _current_position(user_id, exchange, symbol)
+        pos_dir = None
+        if pos_amt is not None:
+            if pos_amt > 0:
+                pos_dir = "long"
+            elif pos_amt < 0:
+                pos_dir = "short"
+        if pos_dir == signal_direction:
+            _update_threshold_from_signal(
+                user_id,
+                exchange,
+                symbol,
+                position_direction=pos_dir,
+                signal_direction=signal_direction,
+                entry_price=price,
+            )
+            print(
+                f"[WATCHER][INFO] Señal coincide con posición {pos_dir}; se actualiza threshold y no se abre orden."
+            )
+            continue
+
         # Nota: no hay overrides por env para el monto. El sizing sale del YAML (DashCRUD) por usuario/exchange.
-        had_opposite = _has_opposite_position(user_id, exchange, direction, symbol)
+        had_opposite = _has_opposite_position(user_id, exchange, order_direction, symbol)
         # Si hay posición opuesta, envía cierre reduceOnly y entrada simultánea en el mismo precio.
         # Se mantienen TP/SL previos hasta que el cierre se ejecute.
         if had_opposite:
-            if not _close_opposite_position(user_id, exchange, direction, symbol, price):
+            if not _close_opposite_position(user_id, exchange, order_direction, symbol, price):
                 print(f"[WATCHER][WARN] No se pudo cerrar posición opuesta en {symbol}; se omite señal.")
                 continue
         key_dir = (user_id, exchange)
         last_dir = _last_order_direction.get(key_dir)
-        if direction and direction == (last_dir or "").lower():
-            print(f"[WATCHER][INFO] Orden {direction} ya colocada en {exchange}; se ignora señal.")
+        if order_direction and order_direction == (last_dir or "").lower():
+            print(f"[WATCHER][INFO] Orden {order_direction} ya colocada en {exchange}; se ignora señal.")
             continue
-        if _has_open_position_same_direction(user_id, exchange, direction, symbol):
-            print(f"[WATCHER][INFO] Ya hay posición {direction} abierta en {symbol}; se omite señal.")
+        if _has_open_position_same_direction(user_id, exchange, order_direction, symbol):
+            print(f"[WATCHER][INFO] Ya hay posición {order_direction} abierta en {symbol}; se omite señal.")
             continue
 
         extra = {
@@ -1231,6 +1393,7 @@ def _submit_trade(event: dict) -> None:
             "event_timestamp": str(event.get("timestamp")),
             "account": user_id,
             "exchange": exchange,
+            "signal_direction": signal_direction,
         }
         order = OrderRequest(
             symbol=symbol,
@@ -1250,10 +1413,10 @@ def _submit_trade(event: dict) -> None:
                 f"[WATCHER][TRADE] user={user_id} ex={exchange} success={response.success} status={response.status}{err_text} raw={response.raw}"
             )
             if response.success:
-                _last_order_direction[key_dir] = direction
-                # Registra umbrales fijos (-5% / +9%) para alertas de cierre
+                _last_order_direction[key_dir] = order_direction
+                # Registra umbral (-2%) para contratrend
                 entry_used = float(response.avg_price or price)
-                _register_threshold(user_id, exchange, symbol, direction, entry_used)
+                _register_threshold(user_id, exchange, symbol, order_direction, entry_used, signal_direction)
         except RuntimeError as exc:
             # Faltan credenciales u otro error de configuración: loguea y sigue con el siguiente exchange/usuario.
             print(f"[WATCHER][WARN] Credenciales/config faltantes para {user_id}/{exchange}: {exc}")
@@ -1323,9 +1486,11 @@ def _dump_thresholds(ts: datetime) -> None:
         user_id = th.get("user_id")
         exchange = th.get("exchange")
         symbol = th.get("symbol", SYMBOL_DISPLAY.replace(".P", ""))
+        signal_direction = th.get("signal_direction")
         entry = float(th.get("entry_price") or 0)
         loss_price = float(th.get("loss_price") or 0)
-        gain_price = float(th.get("gain_price") or 0)
+        gain_raw = th.get("gain_price")
+        gain_price = float(gain_raw) if gain_raw not in (None, "") else None
         mark = None
         triggered_kind = th.get("triggered_kind")
         last_attempt = th.get("last_close_attempt")
@@ -1347,7 +1512,8 @@ def _dump_thresholds(ts: datetime) -> None:
             price_cache[cache_key] = mark
         print(
             f"[WATCHER][THRESHOLDS][DUMP] user={user_id} ex={exchange} symbol={symbol} "
-            f"entry={entry:.6f} loss={loss_price:.6f} gain={gain_price:.6f} mark={mark} "
+            f"entry={entry:.6f} loss={loss_price:.6f} gain={gain_price} mark={mark} "
+            f"signal_dir={signal_direction} "
             f"triggered={triggered_kind} last_attempt={last_attempt}"
         )
 
