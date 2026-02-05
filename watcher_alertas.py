@@ -731,6 +731,26 @@ def _current_position(user_id: str, exchange: str, symbol: str) -> float | None:
         return None
 
 
+def _confirm_no_position(user_id: str, exchange: str, symbol: str) -> bool:
+    """
+    Verifica ausencia de posición con reintentos para evitar limpiar thresholds por errores transitorios.
+    Devuelve True si confirma 0, False si detecta posición o falla la consulta.
+    """
+    for attempt in range(max(POSITION_RETRY_COUNT, 1)):
+        pos_amt = _current_position(user_id, exchange, symbol)
+        if pos_amt is None:
+            print(
+                f"[WATCHER][THRESHOLDS][SKIP] user={user_id} ex={exchange} symbol={symbol} "
+                f"reason=position_unknown"
+            )
+            return False
+        if pos_amt != 0:
+            return False
+        if attempt < POSITION_RETRY_COUNT - 1:
+            time.sleep(max(POSITION_RETRY_DELAY, 0.1))
+    return True
+
+
 def _close_position(user_id: str, exchange: str, symbol: str, direction: str) -> bool:
     """
     Cierra posición completa usando orden reduceOnly MARKET.
@@ -914,6 +934,9 @@ def _evaluate_thresholds(current_price: float, ts) -> list[dict]:
             keep_thresholds.append(th)
             continue
         if pos_amt == 0:
+            if not _confirm_no_position(user_id, exchange, symbol):
+                keep_thresholds.append(th)
+                continue
             print(
                 f"[WATCHER][THRESHOLDS][CLEAN] user={user_id} ex={exchange} symbol={symbol} "
                 f"reason=no_position"
@@ -1431,6 +1454,8 @@ THRESHOLD_POLL_SECONDS = float(os.getenv("THRESHOLD_POLL_SECONDS", "1"))
 THRESHOLDS_DUMP_SECONDS = float(os.getenv("THRESHOLDS_DUMP_SECONDS", "300"))
 THRESHOLDS_RETRY_SECONDS = float(os.getenv("THRESHOLDS_RETRY_SECONDS", "10"))
 THRESHOLDS_DUMP_SECONDS = float(os.getenv("THRESHOLDS_DUMP_SECONDS", "300"))
+POSITION_RETRY_COUNT = int(os.getenv("WATCHER_POSITION_RETRY_COUNT", "3"))
+POSITION_RETRY_DELAY = float(os.getenv("WATCHER_POSITION_RETRY_DELAY", "0.5"))
 
 
 def _notify_startup():
