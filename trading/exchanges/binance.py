@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import math
 from decimal import Decimal, ROUND_DOWN
+import uuid
 from typing import Any, Dict, Optional, List
 
 from binance.um_futures import UMFutures
@@ -15,15 +16,26 @@ from ..utils.logging import get_logger
 logger = get_logger("trading.exchanges.binance")
 
 
+def _client_order_id(prefix: str | None, tag: str | None = None) -> str | None:
+    if not prefix:
+        return None
+    suffix = uuid.uuid4().hex[:20]
+    if tag:
+        return f"{prefix}{tag}-{suffix}"
+    return f"{prefix}{suffix}"
+
+
+
 class BinanceClient(ExchangeClient):
     name = "binance"
 
     def _build_client(self, credential: ExchangeCredential) -> UMFutures:
         api_key, api_secret = credential.resolve_keys(os.environ)
         base_url = "https://testnet.binancefuture.com" if credential.environment == ExchangeEnvironment.TESTNET else None
+        timeout = float(os.getenv("BINANCE_HTTP_TIMEOUT", "5"))
         if base_url:
-            return UMFutures(key=api_key, secret=api_secret, base_url=base_url)
-        return UMFutures(key=api_key, secret=api_secret)
+            return UMFutures(key=api_key, secret=api_secret, base_url=base_url, timeout=timeout)
+        return UMFutures(key=api_key, secret=api_secret, timeout=timeout)
 
     @staticmethod
     def _format_order_params(order: OrderRequest) -> Dict[str, Optional[str]]:
@@ -42,6 +54,10 @@ class BinanceClient(ExchangeClient):
             "quantity": _quantize(order.quantity, "0.001"),
             "reduceOnly": "true" if order.reduce_only else "false",
         }
+        prefix = os.getenv("CLIENT_ORDER_ID_PREFIX", "").strip()
+        client_id = order.client_order_id or _client_order_id(prefix)
+        if client_id:
+            params["newClientOrderId"] = client_id
         if order.type.value == "MARKET":
             # Binance rechaza timeInForce/isPostOnly en órdenes MARKET
             return params
@@ -83,6 +99,7 @@ class BinanceClient(ExchangeClient):
                     symbol=symbol,
                     side="SELL" if side == "BUY" else "BUY",
                     type="TAKE_PROFIT_MARKET",
+                    newClientOrderId=_client_order_id(os.getenv("CLIENT_ORDER_ID_PREFIX", "").strip(), "TP"),
                     stopPrice=_quant(tp, "0.1"),
                     workingType="MARK_PRICE",
                     # closePosition hace que no abra posición nueva y cierre todo
@@ -100,6 +117,7 @@ class BinanceClient(ExchangeClient):
                     symbol=symbol,
                     side="SELL" if side == "BUY" else "BUY",
                     type="STOP_MARKET",
+                    newClientOrderId=_client_order_id(os.getenv("CLIENT_ORDER_ID_PREFIX", "").strip(), "SL"),
                     stopPrice=_quant(sl, "0.1"),
                     workingType="MARK_PRICE",
                     closePosition="true",
