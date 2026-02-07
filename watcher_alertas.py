@@ -68,9 +68,10 @@ def _load_manager() -> AccountManager | None:
         return None
 
 
-def _bybit_position_amount(cred: ExchangeCredential, symbol: str) -> float:
+def _bybit_position_amount(cred: ExchangeCredential, symbol: str) -> float | None:
     """
     Devuelve cantidad firmada (long >0, short <0) para Bybit linear.
+    Si hay error en la API devuelve None (posición desconocida).
     """
     try:
         from pybit.unified_trading import HTTP  # type: ignore
@@ -95,7 +96,7 @@ def _bybit_position_amount(cred: ExchangeCredential, symbol: str) -> float:
             return 0.0
         return size if side == "buy" else -size
     except Exception:
-        return 0.0
+        return None
 
 
 def _bybit_mark_price(cred: ExchangeCredential, symbol: str) -> float | None:

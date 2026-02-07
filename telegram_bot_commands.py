@@ -9,6 +9,7 @@ Actualmente soporta:
 from __future__ import annotations
 
 import os
+import json
 import time
 import subprocess
 from pathlib import Path
@@ -23,6 +24,60 @@ from trading.accounts.models import ExchangeCredential, ExchangeEnvironment
 
 _PENDING_ENV_UPDATES: dict[str, dict[str, object]] = {}
 
+
+def _load_thresholds(path: Path) -> list[dict]:
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
+def _binance_position_details(cred: ExchangeCredential, symbol: str) -> tuple[float | None, float | None]:
+    try:
+        from binance.um_futures import UMFutures
+    except Exception:
+        return None, None
+    try:
+        api_key, api_secret = cred.resolve_keys(os.environ)
+        client = UMFutures(key=api_key, secret=api_secret)
+        positions = client.get_position_risk(symbol=symbol)
+        if not positions:
+            return 0.0, None
+        pos = positions[0]
+        amt = float(pos.get("positionAmt") or 0.0)
+        entry = float(pos.get("entryPrice") or 0.0)
+        return amt, (entry if entry > 0 else None)
+    except Exception:
+        return None, None
+
+
+def _bybit_position_details(cred: ExchangeCredential, symbol: str) -> tuple[float | None, float | None]:
+    try:
+        from pybit.unified_trading import HTTP
+    except Exception:
+        return None, None
+    try:
+        api_key, api_secret = cred.resolve_keys(os.environ)
+        is_testnet = cred.environment != ExchangeEnvironment.LIVE
+        session = HTTP(testnet=is_testnet, api_key=api_key, api_secret=api_secret)
+        resp = session.get_positions(category="linear", symbol=symbol)
+        data = resp.get("result", {}).get("list", []) if isinstance(resp, dict) else []
+        if not data:
+            return 0.0, None
+        pos = data[0]
+        size = float(pos.get("size") or 0.0)
+        side = (pos.get("side") or "").lower()
+        if side == "sell":
+            size = -abs(size)
+        elif side == "buy":
+            size = abs(size)
+        entry = float(pos.get("avgPrice") or 0.0)
+        return size, (entry if entry > 0 else None)
+    except Exception:
+        return None, None
 
 def _parse_chat_ids(chat_ids_env: str | None) -> list[str]:
     if not chat_ids_env:
@@ -412,6 +467,75 @@ def _handle_command(
     if command.startswith("/estavivo"):
         report = generate_systemd_heartbeat_message(required_services)
         _send_message(token, chat_id, report, reply_to=message_id)
+        return
+
+    if command.startswith("/posicion"):
+        accounts_path = Path(os.getenv("WATCHER_ACCOUNTS_FILE", "trading/accounts/oci_accounts.yaml"))
+        thresholds_path = Path(os.getenv("WATCHER_THRESHOLDS_FILE", "backtest/backtestTR/pending_thresholds.json"))
+        try:
+            manager = AccountManager.from_file(accounts_path)
+        except Exception as exc:
+            _send_message(token, chat_id, f"No pude cargar cuentas: {exc}", reply_to=message_id)
+            return
+
+        arg_map, errors = _parse_args_map(arg)
+        user_filter = ""
+        exchange_filter = ""
+        if not errors and arg_map:
+            user_filter = str(arg_map.get("user_id", "")).strip()
+            exchange_filter = str(arg_map.get("exchange", "")).strip().lower()
+        else:
+            tokens = arg.split()
+            if tokens:
+                if len(tokens) >= 2 and tokens[-1].lower() in {"binance", "bybit", "dydx"}:
+                    exchange_filter = tokens[-1].lower()
+                    user_filter = " ".join(tokens[:-1]).strip()
+                else:
+                    user_filter = " ".join(tokens).strip()
+
+        thresholds = _load_thresholds(thresholds_path)
+        rows = []
+        for account in manager.list_accounts():
+            if not account.enabled:
+                continue
+            if user_filter and account.user_id != user_filter:
+                continue
+            for ex_name, cred in (account.exchanges or {}).items():
+                if exchange_filter and ex_name.lower() != exchange_filter:
+                    continue
+                if isinstance(cred.extra, dict) and cred.extra.get("enabled") is False:
+                    continue
+                symbol = (cred.extra or {}).get("symbol") or "ETHUSDT"
+                pos_amt = None
+                entry_price = None
+                if ex_name.lower() == "binance":
+                    pos_amt, entry_price = _binance_position_details(cred, symbol)
+                elif ex_name.lower() == "bybit":
+                    pos_amt, entry_price = _bybit_position_details(cred, symbol)
+                else:
+                    continue
+                if pos_amt is None:
+                    status = "pos=ERROR"
+                else:
+                    status = f"pos={pos_amt:.4f}"
+                if entry_price:
+                    status += f" entry={entry_price:.4f}"
+                th = None
+                for t in thresholds:
+                    if t.get("user_id") == account.user_id and t.get("exchange") == ex_name and t.get("symbol") == symbol:
+                        th = t
+                        break
+                if th:
+                    status += f" SL={float(th.get(loss_price) or 0):.4f}"
+                    gain = th.get(gain_price)
+                    if gain not in (None, ""):
+                        status += f" TP={float(gain):.4f}"
+                rows.append(f"- {account.user_id}/{ex_name} {symbol} → {status}")
+
+        if not rows:
+            _send_message(token, chat_id, "No hay posiciones abiertas (o no se pudo consultar).", reply_to=message_id)
+        else:
+            _send_message(token, chat_id, "Posiciones:\n" + "\n".join(rows), reply_to=message_id)
         return
 
     if command.startswith("/usuarios"):
