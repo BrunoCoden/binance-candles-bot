@@ -174,6 +174,8 @@ def _close_disabled_accounts_positions() -> None:
         if account.enabled:
             continue
         for exchange, cred in (account.exchanges or {}).items():
+            if isinstance(cred.extra, dict) and cred.extra.get("enabled") is False:
+                continue
             symbol = (cred.extra or {}).get("symbol") or SYMBOL_DISPLAY.replace(".P", "")
             try:
                 pos_amt = _current_position(account.user_id, exchange, symbol)
@@ -293,6 +295,8 @@ def _resolve_targets() -> list[tuple[str, str]]:
         if user_filter and account.user_id.lower() != user_filter:
             continue
         for ex_name, cred in account.exchanges.items():
+            if isinstance(cred.extra, dict) and cred.extra.get("enabled") is False:
+                continue
             if exchange_filter and ex_name.lower() != exchange_filter:
                 continue
             targets.append((account.user_id, ex_name))
@@ -614,6 +618,8 @@ def _rebuild_thresholds_from_open_positions() -> None:
         if not account.enabled:
             continue
         for exchange, cred in (account.exchanges or {}).items():
+            if isinstance(cred.extra, dict) and cred.extra.get("enabled") is False:
+                continue
             scanned += 1
             symbol = (cred.extra or {}).get("symbol") or SYMBOL_DISPLAY.replace(".P", "")
             pos_amt = 0.0
