@@ -1,4 +1,6 @@
 import os
+import json
+from pathlib import Path
 import numpy as np
 import pandas as pd
 import requests
@@ -27,6 +29,11 @@ TELEGRAM_CHAT_IDS = [part.strip() for part in _chat_ids_raw.replace(";", ",").sp
 SIGNAL_ALERTS_ENABLED = os.getenv("ALERT_ENABLE_BOLLINGER_SIGNALS", "false").lower() == "true"
 _last_direction: str | None = None
 _pending_break: dict | None = None  # Guarda rotura pendiente hasta que haya cierre de rebote
+_last_signal_loaded: bool = False
+_LAST_SIGNAL_PATHS = (
+    Path("last_signal.json"),
+    Path("backtest/backtestTR/last_signal.json"),
+)
 
 LOCAL_TZ_NAME = os.getenv("TZ", "UTC")
 try:
@@ -53,6 +60,32 @@ def _prepare_frames() -> dict | None:
         "stream": ohlc_stream,
         "bollinger": bb_aligned,
     }
+
+def _load_last_signal() -> str | None:
+    for path in _LAST_SIGNAL_PATHS:
+        try:
+            if not path.exists():
+                continue
+            data = json.loads(path.read_text(encoding="utf-8"))
+            direction = (data.get("last_direction") or "").strip().lower()
+            if direction in ("long", "short"):
+                return direction
+        except Exception:
+            continue
+    return None
+
+
+def _save_last_signal(direction: str, ts) -> None:
+    payload = {
+        "last_direction": direction,
+        "ts": ts.isoformat() if hasattr(ts, "isoformat") else str(ts),
+    }
+    for path in _LAST_SIGNAL_PATHS:
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(payload), encoding="utf-8")
+        except Exception:
+            continue
 
 
 def _bollinger_alert(bb_aligned: pd.DataFrame, ohlc_stream: pd.DataFrame):
@@ -151,6 +184,20 @@ def _bollinger_alert(bb_aligned: pd.DataFrame, ohlc_stream: pd.DataFrame):
 
     # Si llegamos aquí es porque se confirmó un rebote y se va a emitir señal
 
+    last_bar = ohlc_stream.iloc[-1]
+    bar_close_ts = last_bar.get("BarCloseTime", last_idx)
+    timestamp = bar_close_ts if isinstance(bar_close_ts, pd.Timestamp) else pd.Timestamp(bar_close_ts)
+
+    global _last_direction, _last_signal_loaded
+    if not _last_signal_loaded:
+        _last_direction = _load_last_signal()
+        _last_signal_loaded = True
+    if _last_direction == direction:
+        print(f"[ALERT][SKIP] Señal repetida {direction}; última={_last_direction}")
+        return None
+    _save_last_signal(direction, timestamp)
+    _last_direction = direction
+
     stop_loss = None
     take_profit = None
     if ref_price and ref_price > 0:
@@ -159,12 +206,8 @@ def _bollinger_alert(bb_aligned: pd.DataFrame, ohlc_stream: pd.DataFrame):
         if TAKE_PROFIT_PCT > 0:
             take_profit = ref_price * (1 + TAKE_PROFIT_PCT) if direction == "long" else ref_price * (1 - TAKE_PROFIT_PCT)
 
-    last_bar = ohlc_stream.iloc[-1]
-    bar_close_ts = last_bar.get("BarCloseTime", last_idx)
     volume = float(last_bar.get("Volume", np.nan))
     basis_now = float(basis.iloc[-1]) if basis is not None else np.nan
-
-    timestamp = bar_close_ts if isinstance(bar_close_ts, pd.Timestamp) else pd.Timestamp(bar_close_ts)
 
     return {
         "type": "bollinger_signal",
