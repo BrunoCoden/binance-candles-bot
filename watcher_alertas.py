@@ -409,6 +409,7 @@ def _register_threshold(
             "loss_price": loss_price,
             "gain_price": gain_price,
             "fired_loss": False,
+            "last_open_ts": time.time(),
             "fired_gain": False,
         }
     )
@@ -449,6 +450,7 @@ def _update_threshold_from_signal(
             "loss_price": loss_price,
             "gain_price": gain_price,
             "fired_loss": False,
+            "last_open_ts": time.time(),
             "fired_gain": False,
         }
     )
@@ -940,6 +942,10 @@ def _evaluate_thresholds(current_price: float, ts) -> list[dict]:
             keep_thresholds.append(th)
             continue
         if pos_amt == 0:
+            last_open_ts = float(th.get("last_open_ts") or 0.0)
+            if last_open_ts and (time.time() - last_open_ts) < POSITION_GRACE_SECONDS:
+                keep_thresholds.append(th)
+                continue
             if not _confirm_no_position(user_id, exchange, symbol):
                 keep_thresholds.append(th)
                 continue
@@ -1462,6 +1468,7 @@ THRESHOLDS_RETRY_SECONDS = float(os.getenv("THRESHOLDS_RETRY_SECONDS", "10"))
 THRESHOLDS_DUMP_SECONDS = float(os.getenv("THRESHOLDS_DUMP_SECONDS", "300"))
 POSITION_RETRY_COUNT = int(os.getenv("WATCHER_POSITION_RETRY_COUNT", "3"))
 POSITION_RETRY_DELAY = float(os.getenv("WATCHER_POSITION_RETRY_DELAY", "0.5"))
+POSITION_GRACE_SECONDS = float(os.getenv("WATCHER_POSITION_GRACE_SECONDS", "20"))
 
 
 def _notify_startup():
