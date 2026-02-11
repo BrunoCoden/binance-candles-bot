@@ -1344,7 +1344,7 @@ def _submit_trade(event: dict) -> None:
         return
     try:
         signal_direction = (event.get("direction") or "").lower()
-        order_direction = _opposite_direction(signal_direction)
+        order_direction = signal_direction
         side = _direction_to_side(order_direction)
     except Exception as exc:
         print(f"[WATCHER][WARN] No se pudo determinar dirección para trading: {exc}")
@@ -1386,7 +1386,7 @@ def _submit_trade(event: dict) -> None:
                 pos_dir = "long"
             elif pos_amt < 0:
                 pos_dir = "short"
-        if pos_dir == signal_direction:
+        if pos_dir == order_direction:
             _update_threshold_from_signal(
                 user_id,
                 exchange,
