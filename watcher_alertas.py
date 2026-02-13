@@ -984,7 +984,8 @@ def _evaluate_thresholds(current_price: float, ts) -> list[dict]:
         if used_price <= 0:
             continue
 
-        flip_direction = signal_direction or _opposite_direction(direction)
+        # En Bollinger, al tocar SL siempre se revierte respecto a la posición actual.
+        flip_direction = _opposite_direction(direction)
         if triggered_kind:
             if now_ts - last_attempt < THRESHOLDS_RETRY_SECONDS:
                 keep_thresholds.append(th)
